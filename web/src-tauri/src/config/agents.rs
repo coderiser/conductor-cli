@@ -15,6 +15,8 @@ pub struct AgentConfig {
     #[serde(alias = "resumeTemplate")]
     pub resume_template: String,  // e.g. "--resume {session_id}"
     #[serde(default)]
+    pub setup: Vec<String>,       // Setup commands run before agent starts
+    #[serde(default)]
     pub builtin: bool,
 }
 
@@ -26,10 +28,10 @@ pub struct AgentsConfig {
 
 fn default_agents() -> Vec<AgentConfig> {
     vec![
-        AgentConfig { id: "cmd".into(), name: "Command Prompt".into(), command: "cmd.exe".into(), args: vec![], create_template: String::new(), resume_template: String::new(), builtin: true },
-        AgentConfig { id: "claude".into(), name: "Claude Code".into(), command: "claude".into(), args: vec![], create_template: "--session-id {session_id}".into(), resume_template: "--resume {session_id}".into(), builtin: false },
-        AgentConfig { id: "opencode".into(), name: "OpenCode".into(), command: "opencode".into(), args: vec![], create_template: String::new(), resume_template: "--session {session_id}".into(), builtin: false },
-        AgentConfig { id: "codex".into(), name: "Codex".into(), command: "codex".into(), args: vec![], create_template: String::new(), resume_template: "resume --last".into(), builtin: false },
+        AgentConfig { id: "cmd".into(), name: "Command Prompt".into(), command: "cmd.exe".into(), args: vec![], create_template: String::new(), resume_template: String::new(), setup: vec![], builtin: true },
+        AgentConfig { id: "claude".into(), name: "Claude Code".into(), command: "claude".into(), args: vec![], create_template: "--session-id {session_id}".into(), resume_template: "--resume {session_id}".into(), setup: vec![], builtin: false },
+        AgentConfig { id: "opencode".into(), name: "OpenCode".into(), command: "opencode".into(), args: vec![], create_template: String::new(), resume_template: "--session {session_id}".into(), setup: vec![], builtin: false },
+        AgentConfig { id: "codex".into(), name: "Codex".into(), command: "codex".into(), args: vec![], create_template: String::new(), resume_template: "resume --last".into(), setup: vec![], builtin: false },
     ]
 }
 
@@ -144,6 +146,25 @@ ses_ccc333";
 
         let new_id = after.iter().find(|id| !prev.contains(id)).cloned();
         assert_eq!(new_id, Some("ses_ccc333".to_string()));
+    }
+
+    #[test]
+    fn test_setup_commands() {
+        let cfg = AgentsConfig::default();
+        // Default agents have empty setup
+        for agent in &cfg.agents {
+            assert!(agent.setup.is_empty(), "{} should have empty setup by default", agent.id);
+        }
+        // Verify setup can be configured via JSON
+        let json = r#"{
+            "agents": [
+                {"id": "test", "name": "Test", "command": "test",
+                 "builtin": false, "setup": ["npm install", "cp .env.example .env"]}
+            ]
+        }"#;
+        let cfg: AgentsConfig = serde_json::from_str(json).unwrap();
+        let agent = cfg.find("test").unwrap();
+        assert_eq!(agent.setup, vec!["npm install", "cp .env.example .env"]);
     }
 
     #[test]

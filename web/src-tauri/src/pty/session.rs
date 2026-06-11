@@ -70,6 +70,16 @@ impl PtySession {
             log::info!("[SPAWN] agent_session_id is EMPTY — skipping template");
         }
 
+        // Collect setup commands from agent config (run before agent starts)
+        let setup_cmds: Vec<String> = agent_config.find(&agent)
+            .map(|a| a.setup.clone())
+            .unwrap_or_default();
+        let setup_chain = if setup_cmds.is_empty() {
+            String::new()
+        } else {
+            format!(" && {}", setup_cmds.join(" && "))
+        };
+
         // Windows: always spawn via cmd.exe /k with explicit cd to set cwd
         let (binary, args): (String, Vec<String>) = if cfg!(windows) {
             let path = which::which(&agent_cmd).unwrap_or_else(|_| std::path::PathBuf::from(&agent_cmd));
@@ -79,12 +89,12 @@ impl PtySession {
             let extra = if agent_args.is_empty() { String::new() } else { format!(" {}", agent_args.join(" ")) };
             match path.extension().and_then(|e| e.to_str()) {
                 Some("cmd") | Some("bat") => {
-                    let cmdline = format!("cd /d {} && call {}{}", cwd, resolved, extra);
+                    let cmdline = format!("cd /d {} && call {}{}{}", cwd, resolved, setup_chain, extra);
                     log::info!("[SPAWN] CMDLINE (call): {}", cmdline);
                     ("cmd.exe".into(), vec!["/k".into(), cmdline])
                 }
                 _ => {
-                    let cmdline = format!("cd /d {} && {}{}", cwd, resolved, extra);
+                    let cmdline = format!("cd /d {} && {}{}{}", cwd, resolved, setup_chain, extra);
                     log::info!("[SPAWN] CMDLINE (direct): {}", cmdline);
                     ("cmd.exe".into(), vec!["/k".into(), cmdline])
                 }

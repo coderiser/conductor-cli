@@ -3,6 +3,7 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { CanvasAddon } from '@xterm/addon-canvas';
 import { ClipboardAddon } from '@xterm/addon-clipboard';
+import { SearchAddon } from '@xterm/addon-search';
 import { pty, type SessionInfo } from '../lib/tauri-ipc';
 import { terminalTheme } from '../lib/terminal-theme';
 import '@xterm/xterm/css/xterm.css';
@@ -24,7 +25,8 @@ export function usePty(agent: string, cwd: string, container: HTMLDivElement | n
       macOptionIsMeta: false,
     });
     const fit = new FitAddon();
-    term.loadAddon(fit); term.loadAddon(new CanvasAddon()); term.loadAddon(new ClipboardAddon());
+    const search = new SearchAddon();
+    term.loadAddon(fit); term.loadAddon(new CanvasAddon()); term.loadAddon(new ClipboardAddon()); term.loadAddon(search);
     term.open(container);
     fit.fit();
     term.write(`\x1b[36m● Starting ${agent}...\x1b[0m\r\n`);
@@ -38,6 +40,14 @@ export function usePty(agent: string, cwd: string, container: HTMLDivElement | n
     term.attachCustomKeyEventHandler((e) => {
       if ((e.ctrlKey && e.shiftKey && e.key === 'C') || (e.ctrlKey && e.key === 'Insert')) {
         copySelection(); return false;
+      }
+      // Search: Ctrl+F opens find bar
+      if (e.ctrlKey && e.key === 'f' && !e.shiftKey && !e.altKey) {
+        search.findNext(''); return false;
+      }
+      // Clear terminal: Ctrl+K or Ctrl+L
+      if (e.ctrlKey && (e.key === 'k' || e.key === 'l') && !e.shiftKey && !e.altKey) {
+        term.clear(); return false;
       }
       return true;
     });
