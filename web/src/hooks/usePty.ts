@@ -30,7 +30,7 @@ export function usePty(agent: string, cwd: string, container: HTMLDivElement | n
     term.open(container);
     fit.fit();
     term.write(`\x1b[36m● Starting ${agent}...\x1b[0m\r\n`);
-    if (resumeId) term.write(`\x1b[35m  ${isRestore ? 'RESUME' : 'NEW'} session: ${resumeId.slice(0, 8)}...\x1b[0m\r\n`);
+    if (resumeId && agent !== 'cmd' && agent !== 'cmd.exe') term.write(`\x1b[35m  ${isRestore ? 'RESUME' : 'NEW'} session: ${resumeId.slice(0, 8)}...\x1b[0m\r\n`);
 
     // Clipboard: copy selection on Ctrl+Shift+C, Ctrl+Insert, or context menu
     const copySelection = () => {

@@ -14,7 +14,7 @@ const now = () => new Date().toLocaleTimeString('en-US', { hour12: false });
 function savePanelsToDb(panels: PanelEntry[]) {
   invoke('save_layout', {
     dockviewJson: '[]',
-    sessions: panels.map(p => ({ id: p.dockId, agent: p.agent, cwd: p.cwd === '.' ? '' : p.cwd, agent_session_id: p.resumeId || '' })),
+    sessions: panels.map(p => ({ id: p.dockId, agent: p.agent, cwd: p.cwd === '.' ? '' : p.cwd, agent_session_id: (p.agent === 'cmd' || p.agent === 'cmd.exe') ? '' : (p.resumeId || '') })),
     windowWidth: window.innerWidth, windowHeight: window.innerHeight,
   }).catch(() => {});
 }
@@ -43,7 +43,8 @@ export default function App() {
             const id = `term-${nextN++}`;
             return { id, dockId: id, agent: s.agent, cwd: s.cwd || '.', createdAt: Date.now(), running: true,
               status: 'starting', needsAttention: false, exited: false,
-              resumeId: s.agent_session_id || undefined, isRestored: true };
+              resumeId: s.agent_session_id || undefined,
+              isRestored: !!(s.agent_session_id) };
           });
           restored.forEach((r) => add({ id: `S${nextN++}`, agent: r.agent, dockviewId: r.dockId, ptyId: '' }));
           setPanels(restored);
