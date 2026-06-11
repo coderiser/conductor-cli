@@ -25,8 +25,8 @@ async function createWindow() {
   // Set up IPC bridge between renderer and daemon
   setupIpcHandlers(daemonClient, mainWindow);
 
-  if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
-    await mainWindow.loadURL(MAIN_WINDOW_VITE_DEV_SERVER_URL);
+  if (!app.isPackaged && process.env.ELECTRON_RENDERER_URL) {
+    await mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL);
   } else {
     await mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'));
   }
