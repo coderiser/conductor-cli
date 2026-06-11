@@ -5,6 +5,14 @@ import { SessionInfo } from './protocol/messages.js';
 export type OutputCallback = (sessionId: string, data: string) => void;
 export type ExitCallback = (sessionId: string, code: number) => void;
 
+interface AgentConfig {
+  command: string;
+  args: string[];
+  createTemplate: string;
+  resumeTemplate: string;
+  setup: string[];
+}
+
 export class PtyManager {
   private sessionStore = new SessionStore();
   private ptyProcesses = new Map<string, pty.IPty>();
@@ -25,6 +33,9 @@ export class PtyManager {
 
     // 模板替换
     if (agentSessionId) {
+      if (!/^[a-zA-Z0-9_-]+$/.test(agentSessionId)) {
+        throw new Error(`Invalid agentSessionId: ${agentSessionId}`);
+      }
       const template = isRestore ? agentConfig.resumeTemplate : agentConfig.createTemplate;
       if (template) {
         const arg = template.replace('{session_id}', agentSessionId);
@@ -44,18 +55,23 @@ export class PtyManager {
     let finalArgs = args;
 
     if (process.platform === 'win32' && command !== 'cmd.exe') {
-      const cmdline = `cd /d ${cwd} && ${command} ${args.join(' ')}`;
+      const cmdline = `cd /d "${cwd}" && ${command} ${args.join(' ')}`;
       finalCommand = 'cmd.exe';
       finalArgs = ['/k', cmdline];
     }
 
-    const ptyProcess = pty.spawn(finalCommand, finalArgs, {
-      name: 'xterm-256color',
-      cols,
-      rows,
-      cwd,
-      env: process.env as { [key: string]: string }
-    });
+    let ptyProcess: pty.IPty;
+    try {
+      ptyProcess = pty.spawn(finalCommand, finalArgs, {
+        name: 'xterm-256color',
+        cols,
+        rows,
+        cwd,
+        env: process.env as { [key: string]: string }
+      });
+    } catch (error) {
+      throw new Error(`Failed to spawn PTY for ${agent}: ${(error as Error).message}`);
+    }
 
     const info: SessionInfo = {
       sessionId,
@@ -118,9 +134,9 @@ export class PtyManager {
     this.sessionStore.setAgentSessionId(sessionId, agentSessionId);
   }
 
-  private getAgentConfig(agent: string): any {
+  private getAgentConfig(agent: string): AgentConfig {
     // TODO: 从 agents.json 加载，这里先用默认值
-    const defaults: Record<string, any> = {
+    const defaults: Record<string, AgentConfig> = {
       'cmd.exe': { command: 'cmd.exe', args: [], createTemplate: '', resumeTemplate: '', setup: [] },
       'claude': { command: 'claude', args: ['--allow-dangerously-skip-permissions'], createTemplate: '--session-id {session_id}', resumeTemplate: '--resume {session_id}', setup: [] },
       'opencode': { command: 'opencode', args: [], createTemplate: '', resumeTemplate: '--session {session_id}', setup: [] },
