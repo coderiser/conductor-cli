@@ -55,6 +55,7 @@ export class DaemonClient {
 
       socket.once('connect', () => {
         this.socket = socket;
+        this.decoder = new FrameDecoder(); // reset decoder to discard any stale bytes from prior connection
         this.setupSocketHandlers();
         this.sendHello();
         resolve();
@@ -117,7 +118,7 @@ export class DaemonClient {
       const resolver = this.requestResolvers.shift();
       if (resolver) {
         resolver(msg);
-        return; // consumed by resolver — still broadcasts via handler subscription
+        return; // consumed by resolver — not broadcast to handlers
       }
     }
 
@@ -171,6 +172,22 @@ export class DaemonClient {
       this.messageHandlers.set(type, []);
     }
     this.messageHandlers.get(type)!.push(handler);
+  }
+
+  /** Remove a previously registered handler for a specific daemon message type. */
+  off(type: string, handler: (msg: DaemonMessage) => void): void {
+    const handlers = this.messageHandlers.get(type);
+    if (handlers) {
+      const idx = handlers.indexOf(handler);
+      if (idx >= 0) handlers.splice(idx, 1);
+    }
+  }
+
+  /** Disconnect and clear all handlers. */
+  destroy(): void {
+    this.disconnect();
+    this.messageHandlers.clear();
+    this.rejectPendingRequests('Client destroyed');
   }
 
   /**
