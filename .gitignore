@@ -1,6 +1,8 @@
 node_modules/
-dist/
 out/
+dist/daemon/
+dist/common/
+dist/webui/
 release/
 coverage/
 *.sqlite
@@ -9,10 +11,6 @@ coverage/
 .superpowers/
 .omc/
 .claude/
-
-# Tauri/Rust build
-web/src-tauri/target/
-web/src-tauri/gen/
 
 # User config
 agents.json
@@ -27,7 +25,3 @@ debug-spawn.log
 
 # Screenshots
 web/screenshots/
-/.claude/
-/.idea/
-/.omc/
-/.superpowers/

@@ -4,9 +4,10 @@
   "description": "AI Agent Terminal Manager",
   "main": "out/main/index.js",
   "scripts": {
-    "dev": "electron-vite dev",
-    "build": "electron-vite build",
-    "package": "electron-builder"
+    "dev": "npm run build:daemon && electron-vite dev",
+    "build": "electron-vite build && npm run build:daemon",
+    "build:daemon": "tsc -p tsconfig.daemon.json",
+    "package": "npm run build && electron-builder"
   },
   "dependencies": {
     "@xterm/addon-canvas": "^0.7.0",
