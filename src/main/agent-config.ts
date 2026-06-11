@@ -1,31 +1,11 @@
 import fs from 'fs';
 import path from 'path';
 import { app } from 'electron';
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
+import { AgentConfig, DEFAULT_AGENTS, mapAgentEntry } from '../common/agent-config.js';
 
-/**
- * Agent configuration — defines how to spawn and manage an agent session.
- * This interface is used by both the Electron main process and the daemon process.
- * The daemon has its own copy in src/daemon/agent-config.ts.
- */
-export interface AgentConfig {
-  id: string;
-  name: string;
-  command: string;
-  args: string[];
-  createTemplate: string;
-  resumeTemplate: string;
-  setup: string[];
-  builtin: boolean;
-}
-
-/** Default agents shipped with the app. */
-export const DEFAULT_AGENTS: AgentConfig[] = [
-  { id: 'cmd', name: 'Command Prompt', command: 'cmd.exe', args: [], createTemplate: '', resumeTemplate: '', setup: [], builtin: true },
-  { id: 'claude', name: 'Claude Code', command: 'claude', args: ['--allow-dangerously-skip-permissions'], createTemplate: '--session-id {session_id}', resumeTemplate: '--resume {session_id}', setup: [], builtin: false },
-  { id: 'opencode', name: 'OpenCode', command: 'opencode', args: [], createTemplate: '', resumeTemplate: '--session {session_id}', setup: [], builtin: false },
-  { id: 'codex', name: 'Codex', command: 'codex', args: [], createTemplate: '', resumeTemplate: 'resume --last', setup: [], builtin: false },
-];
+export type { AgentConfig };
+export { DEFAULT_AGENTS } from '../common/agent-config.js';
 
 /**
  * Load agent configuration from agents.json.
@@ -54,26 +34,12 @@ export function loadAgentConfig(): AgentConfig[] {
 export function isAgentInstalled(command: string): boolean {
   try {
     if (process.platform === 'win32') {
-      execSync(`where ${command}`, { stdio: 'ignore' });
+      execFileSync('where', [command], { stdio: 'ignore' });
     } else {
-      execSync(`command -v ${command}`, { stdio: 'ignore' });
+      execFileSync('command', ['-v', command], { stdio: 'ignore' });
     }
     return true;
   } catch {
     return false;
   }
-}
-
-/** Map a raw agents.json entry to AgentConfig, handling snake_case → camelCase. */
-function mapAgentEntry(entry: any): AgentConfig {
-  return {
-    id: entry.id ?? '',
-    name: entry.name ?? entry.id ?? '',
-    command: entry.command ?? '',
-    args: entry.args ?? [],
-    createTemplate: entry.create_template ?? entry.createTemplate ?? '',
-    resumeTemplate: entry.resume_template ?? entry.resumeTemplate ?? '',
-    setup: entry.setup ?? [],
-    builtin: entry.builtin ?? false,
-  };
 }
