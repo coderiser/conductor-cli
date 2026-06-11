@@ -1,9 +1,12 @@
-import { app, BrowserWindow } from 'electron';
+import { app, BrowserWindow, globalShortcut } from 'electron';
 import path from 'path';
+import { DaemonClient } from './daemon-client.js';
+import { setupIpcHandlers } from './ipc-handlers.js';
 
 let mainWindow: BrowserWindow | null = null;
+let daemonClient: DaemonClient | null = null;
 
-function createWindow() {
+async function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1400,
     height: 900,
@@ -14,11 +17,23 @@ function createWindow() {
     }
   });
 
+  // Connect to PTY daemon (auto-spawns if not running)
+  daemonClient = new DaemonClient();
+  await daemonClient.connect();
+
+  // Set up IPC bridge between renderer and daemon
+  setupIpcHandlers(daemonClient, mainWindow);
+
   if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
-    mainWindow.loadURL(MAIN_WINDOW_VITE_DEV_SERVER_URL);
+    await mainWindow.loadURL(MAIN_WINDOW_VITE_DEV_SERVER_URL);
   } else {
-    mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'));
+    await mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'));
   }
+
+  // Global shortcut to quit
+  globalShortcut.register('F10', () => {
+    app.quit();
+  });
 
   mainWindow.on('closed', () => {
     mainWindow = null;
@@ -28,5 +43,6 @@ function createWindow() {
 app.whenReady().then(createWindow);
 
 app.on('window-all-closed', () => {
+  daemonClient?.disconnect();
   app.quit();
 });
