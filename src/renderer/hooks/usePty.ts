@@ -52,10 +52,11 @@ export function usePty(agent: string, cwd: string, container: HTMLDivElement | n
       return true;
     });
     // Right-click to copy
-    container.addEventListener('contextmenu', (e) => {
+    const onContextMenu = (e: MouseEvent) => {
       const sel = term.getSelection();
       if (sel) { navigator.clipboard.writeText(sel).catch(() => {}); e.preventDefault(); }
-    });
+    };
+    container.addEventListener('contextmenu', onContextMenu);
 
     const focusIt = () => term.focus();
     focusIt();
@@ -164,6 +165,7 @@ export function usePty(agent: string, cwd: string, container: HTMLDivElement | n
       clearTimeout(t1); clearTimeout(t2); clearTimeout(t3);
       clearTimeout(timerRef.current); clearTimeout(statusTimerRef.current);
       container.removeEventListener('click', focusIt);
+      container.removeEventListener('contextmenu', onContextMenu);
       onDataDisposable.dispose();
       ro.disconnect();
       cleanupRef.current.forEach((f) => f());
