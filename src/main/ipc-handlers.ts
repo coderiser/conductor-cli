@@ -1,6 +1,6 @@
 import { ipcMain, BrowserWindow } from 'electron';
 import { DaemonClient } from './daemon-client.js';
-import { saveLayout, loadLayout, saveTask, saveContextEntry } from './database.js';
+import { saveLayout, loadLayout, saveTask, saveContextEntry, saveWorktree, loadWorktrees, deleteWorktree } from './database.js';
 import { loadAgentConfig, isAgentInstalled } from './agent-config.js';
 import { getGitStatus } from './git-integration.js';
 import { StatsCollector } from './stats-collector.js';
@@ -11,6 +11,8 @@ import type { ContextShare } from './context-share.js';
 import type { EmbeddedBrowser } from './embedded-browser.js';
 import type { TaskRecord } from '../common/stats-types';
 import type { AgentCapability } from '../common/agent-protocol';
+import type { WorktreeManager } from './worktree-manager.js';
+import type { WorktreeWatcher } from './worktree-watcher.js';
 
 export function setupIpcHandlers(daemonClient: DaemonClient, mainWindow: BrowserWindow, statsCollector: StatsCollector, notifyCenter: NotifyCenter, taskQueue: TaskQueue, contextShare: ContextShare, embeddedBrowser: EmbeddedBrowser): void {
   // Return the project directory (main process cwd) to the renderer
@@ -191,5 +193,67 @@ export function setupDatabaseIpcHandlers() {
 
   ipcMain.handle('load_layout', async () => {
     return loadLayout();
+  });
+}
+
+export function setupWorktreeIpcHandlers(manager: WorktreeManager, watcher: WorktreeWatcher) {
+  // 1. Create worktree for an agent session
+  ipcMain.handle('worktree_create', async (_e, args: {
+    sessionId: string; agentId: string; projectPath: string; baseBranch?: string;
+  }) => {
+    const info = await manager.createForAgent(
+      args.sessionId, args.agentId, args.projectPath, args.baseBranch ?? 'main',
+    );
+    // Persist to database
+    saveWorktree({
+      id: info.id,
+      session_id: info.sessionId,
+      agent_id: info.agentId,
+      worktree_path: info.worktreePath,
+      branch: info.branch,
+      base_branch: info.baseBranch,
+      project_path: info.projectPath,
+      created_at: info.createdAt,
+      status: info.status,
+    });
+    // Start watching for changes
+    watcher.watch(info.sessionId, info.worktreePath);
+    return info;
+  });
+
+  // 2. List all active worktrees
+  ipcMain.handle('worktree_list', async () => {
+    return manager.list();
+  });
+
+  // 3. Get worktree by session id
+  ipcMain.handle('worktree_get', async (_e, sessionId: string) => {
+    return manager.getBySession(sessionId) ?? null;
+  });
+
+  // 4. Cleanup worktree
+  ipcMain.handle('worktree_cleanup', async (_e, args: {
+    sessionId: string; keepBranch?: boolean; force?: boolean;
+  }) => {
+    await manager.cleanup(args.sessionId, {
+      keepBranch: args.keepBranch ?? false,
+      force: args.force ?? false,
+    });
+    // Remove from database
+    const info = manager.getBySession(args.sessionId);
+    // Note: after cleanup, getBySession returns undefined.
+    // We need the id before cleanup — pass it or look up first.
+    // For now, delete by session_id using the worktree id we looked up
+    try {
+      const wts = loadWorktrees();
+      const row = wts.find(w => w.session_id === args.sessionId);
+      if (row) deleteWorktree(row.id);
+    } catch { /* best-effort */ }
+    watcher.unwatch(args.sessionId);
+  });
+
+  // 5. Detect conflicts across all active worktrees
+  ipcMain.handle('worktree_conflicts', async () => {
+    return manager.detectConflicts();
   });
 }

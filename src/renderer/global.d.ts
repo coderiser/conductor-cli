@@ -37,6 +37,13 @@ export interface ElectronAPI {
   destroyBrowser: (id: string) => Promise<void>;
   listBrowsers: () => Promise<any[]>;
 
+  // Worktree APIs
+  createWorktree: (args: { sessionId: string; agentId: string; projectPath: string; baseBranch?: string }) => Promise<any>;
+  listWorktrees: () => Promise<any[]>;
+  getWorktree: (sessionId: string) => Promise<any | null>;
+  cleanupWorktree: (args: { sessionId: string; keepBranch?: boolean; force?: boolean }) => Promise<void>;
+  getWorktreeConflicts: () => Promise<any>;
+
   // Window controls
   closeWindow: () => void;
 }

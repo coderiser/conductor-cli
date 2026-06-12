@@ -4,6 +4,7 @@ import Database from 'better-sqlite3';
 import path from 'path';
 import { app } from 'electron';
 import type { TaskRecord, ContextEntry } from '../common/stats-types';
+import type { WorktreeRow } from '../common/worktree-types';
 
 interface LayoutData {
   sessions: { id: string; agent: string; cwd: string; agent_session_id: string }[];
@@ -78,6 +79,18 @@ export function initDatabase() {
         priority TEXT DEFAULT 'normal',
         timestamp INTEGER NOT NULL,
         consumed INTEGER DEFAULT 0
+      );
+
+      CREATE TABLE IF NOT EXISTS worktrees (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        agent_id TEXT NOT NULL,
+        worktree_path TEXT NOT NULL,
+        branch TEXT NOT NULL,
+        base_branch TEXT NOT NULL,
+        project_path TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        status TEXT NOT NULL DEFAULT 'ready'
       );
     `);
   } catch (err) {
@@ -222,4 +235,27 @@ export function loadContextEntries(): ContextEntry[] {
     tags: JSON.parse(r.tags), priority: r.priority,
     timestamp: r.timestamp, consumed: r.consumed === 1,
   }));
+}
+
+// ── Worktree persistence (Phase 5) ─────────────────────────────────────────
+
+export function saveWorktree(row: WorktreeRow): void {
+  if (!db) return;
+  const stmt = db.prepare(`
+    INSERT OR REPLACE INTO worktrees
+      (id, session_id, agent_id, worktree_path, branch, base_branch, project_path, created_at, status)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  stmt.run(row.id, row.session_id, row.agent_id, row.worktree_path,
+    row.branch, row.base_branch, row.project_path, row.created_at, row.status);
+}
+
+export function loadWorktrees(): WorktreeRow[] {
+  if (!db) return [];
+  return db.prepare('SELECT * FROM worktrees ORDER BY created_at DESC').all() as WorktreeRow[];
+}
+
+export function deleteWorktree(id: string): void {
+  if (!db) return;
+  db.prepare('DELETE FROM worktrees WHERE id = ?').run(id);
 }

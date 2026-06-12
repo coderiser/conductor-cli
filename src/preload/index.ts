@@ -69,6 +69,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   destroyBrowser: (id: string) => ipcRenderer.invoke('browser_destroy', id),
   listBrowsers: () => ipcRenderer.invoke('browser_list'),
 
+  // Worktree APIs
+  createWorktree: (args: { sessionId: string; agentId: string; projectPath: string; baseBranch?: string }) =>
+    ipcRenderer.invoke('worktree_create', args),
+  listWorktrees: () => ipcRenderer.invoke('worktree_list'),
+  getWorktree: (sessionId: string) => ipcRenderer.invoke('worktree_get', sessionId),
+  cleanupWorktree: (args: { sessionId: string; keepBranch?: boolean; force?: boolean }) =>
+    ipcRenderer.invoke('worktree_cleanup', args),
+  getWorktreeConflicts: () => ipcRenderer.invoke('worktree_conflicts'),
+
   // Window controls
   closeWindow: () => ipcRenderer.send('window-close'),
 });
