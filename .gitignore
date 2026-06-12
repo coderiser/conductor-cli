@@ -25,3 +25,11 @@ debug-spawn.log
 
 # Screenshots
 web/screenshots/
+
+# Temporary dev scripts at repo root
+_*.js
+check-*.js
+kill-*.js
+restart-*.js
+start-*.js
+test-*.js
