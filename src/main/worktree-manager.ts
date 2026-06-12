@@ -108,7 +108,7 @@ export class WorktreeManager {
         worktreePath, startPointArg,
       ]);
       worktreeCreated = true;
-      await git.cwd(worktreePath)
+      await simpleGit(worktreePath)
         .raw(['config', 'push.autoSetupRemote', 'true']).catch(() => {});
     } catch (err) {
       await this.rollbackCreation(git, worktreePath, branchName, worktreeCreated);
@@ -135,6 +135,135 @@ export class WorktreeManager {
       await git.raw(['rev-parse', '--verify', `refs/heads/${branchName}`]);
       await git.raw(['branch', '-D', branchName]);
     } catch { /* already deleted — satisfied */ }
+  }
+
+  // ═══ Worktree Cleanup (6-phase) ═══
+
+  private async removeWorktreeDir(git: SimpleGit, worktreePath: string, force: boolean): Promise<void> {
+    // Strategy: try git worktree remove (no force), then with --force, then manual rm
+    const strategies: Array<() => Promise<void>> = [
+      async () => { await git.raw(['worktree', 'remove', worktreePath]); },
+      async () => { await git.raw(['worktree', 'remove', '--force', worktreePath]); },
+      async () => {
+        // chmod + rm — needed on Windows where file locks block git
+        try {
+          const files = fs.readdirSync(worktreePath);
+          for (const f of files) {
+            const fp = path.join(worktreePath, f);
+            try { fs.chmodSync(fp, 0o777); } catch {}
+          }
+        } catch {}
+        fs.rmSync(worktreePath, { recursive: true, force: true });
+      },
+    ];
+
+    for (const attempt of strategies) {
+      try {
+        await attempt();
+        if (!fs.existsSync(worktreePath)) return;
+      } catch { /* next strategy */ }
+    }
+
+    if (!force) throw new Error(`Failed to remove worktree at ${worktreePath}`);
+  }
+
+  async cleanup(sessionId: string, options: CleanupOptions): Promise<void> {
+    // Phase 1: Lookup
+    const info = this.activeWorktrees.get(sessionId);
+    if (!info) throw new Error(`No active worktree for session ${sessionId}`);
+
+    // Phase 2: Verify directory exists
+    if (!fs.existsSync(info.worktreePath)) {
+      this.activeWorktrees.delete(sessionId);
+      return; // already gone — idempotent
+    }
+
+    const git = this.getGit(info.projectPath);
+
+    // Phase 3: Remove worktree (try clean, then force, then manual)
+    await this.removeWorktreeDir(git, info.worktreePath, options.force);
+
+    // Phase 4: Prune — cleans stale worktree refs so branch delete can succeed
+    await git.raw(['worktree', 'prune']).catch(() => {});
+
+    // Phase 5: Branch cleanup (now safe after prune)
+    if (!options.keepBranch) {
+      try {
+        await git.raw(['branch', '-D', info.branch]);
+      } catch {
+        // Fallback: manually delete the ref
+        try { await git.raw(['update-ref', '-d', `refs/heads/${info.branch}`]); } catch {}
+      }
+    }
+
+    // Phase 6: Dispose from map + clean empty parent dirs
+    this.activeWorktrees.delete(sessionId);
+    this.cleanEmptyParents(info.worktreePath);
+  }
+
+  private cleanEmptyParents(dir: string): void {
+    let current = path.dirname(dir);
+    const root = WorktreeManager.worktreesRoot();
+    while (current.startsWith(root) && current !== root) {
+      try {
+        const entries = fs.readdirSync(current);
+        if (entries.length === 0) {
+          fs.rmdirSync(current);
+          current = path.dirname(current);
+        } else {
+          break;
+        }
+      } catch { break; }
+    }
+  }
+
+  // ═══ Conflict Detection ═══
+
+  async detectConflicts(): Promise<ConflictReport> {
+    const conflicts: ConflictReport['conflicts'] = [];
+
+    // Group worktrees by project
+    const byProject = new Map<string, WorktreeInfo[]>();
+    for (const wt of this.activeWorktrees.values()) {
+      const list = byProject.get(wt.projectPath) || [];
+      list.push(wt);
+      byProject.set(wt.projectPath, list);
+    }
+
+    for (const [projectPath, worktrees] of byProject) {
+      if (worktrees.length < 2) continue;
+
+      // Collect modified files per worktree
+      const git = this.getGit(projectPath);
+      const fileMap = new Map<string, Array<{ worktree: string; branch: string }>>();
+
+      for (const wt of worktrees) {
+        if (!fs.existsSync(wt.worktreePath)) continue;
+        try {
+          const wtGit = simpleGit(wt.worktreePath);
+          const status = await wtGit.raw(['diff', '--name-only', 'HEAD']);
+          const files = status.trim().split('\n').filter(Boolean);
+          for (const file of files) {
+            const entry = fileMap.get(file) || [];
+            entry.push({ worktree: wt.worktreePath, branch: wt.branch });
+            fileMap.set(file, entry);
+          }
+        } catch { /* skip worktrees with git issues */ }
+      }
+
+      // Flag files modified in >= 2 worktrees
+      for (const [file, entries] of fileMap) {
+        if (entries.length >= 2) {
+          conflicts.push({
+            file,
+            worktrees: entries.map(e => e.worktree),
+            branches: entries.map(e => e.branch),
+          });
+        }
+      }
+    }
+
+    return { hasConflicts: conflicts.length > 0, conflicts };
   }
 
   // ═══ Accessors ═══

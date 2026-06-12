@@ -73,4 +73,70 @@ describe('WorktreeManager', () => {
     const branches = await git.branch();
     expect(branches.all).toContain(info.branch);
   });
+
+  // ── Cleanup tests ───────────────────────────────────────────────────────
+
+  it('should cleanup a worktree (remove dir + branch, prune)', async () => {
+    const info = await manager.createForAgent('S1', 'claude', testRepo, 'main');
+    await manager.cleanup('S1', { keepBranch: false, force: false });
+    expect(manager.getBySession('S1')).toBeUndefined();
+    expect(fs.existsSync(info.worktreePath)).toBe(false);
+    const branches = await git.branch();
+    expect(branches.all).not.toContain(info.branch);
+  });
+
+  it('should cleanup with keepBranch option', async () => {
+    const info = await manager.createForAgent('S1', 'claude', testRepo, 'main');
+    await manager.cleanup('S1', { keepBranch: true, force: false });
+    expect(manager.getBySession('S1')).toBeUndefined();
+    expect(fs.existsSync(info.worktreePath)).toBe(false);
+    const branches = await git.branch();
+    expect(branches.all).toContain(info.branch);
+  });
+
+  it('should cleanup with force option for dirty worktree', async () => {
+    const info = await manager.createForAgent('S1', 'claude', testRepo, 'main');
+    // Make the worktree dirty
+    fs.writeFileSync(path.join(info.worktreePath, 'dirty.txt'), 'unstaged');
+    await manager.cleanup('S1', { keepBranch: false, force: true });
+    expect(manager.getBySession('S1')).toBeUndefined();
+    expect(fs.existsSync(info.worktreePath)).toBe(false);
+  });
+
+  it('should throw when cleaning up unknown session', async () => {
+    await expect(
+      manager.cleanup('unknown', { keepBranch: false, force: false })
+    ).rejects.toThrow(/unknown/);
+  });
+
+  it('should be idempotent when worktree dir is already gone', async () => {
+    const info = await manager.createForAgent('S1', 'claude', testRepo, 'main');
+    fs.rmSync(info.worktreePath, { recursive: true, force: true });
+    // Should not throw — just remove from map
+    await manager.cleanup('S1', { keepBranch: false, force: false });
+    expect(manager.getBySession('S1')).toBeUndefined();
+  });
+
+  // ── Conflict detection tests ────────────────────────────────────────────
+
+  it('should detect no conflicts when worktrees are clean', async () => {
+    await manager.createForAgent('S1', 'claude', testRepo, 'main');
+    await manager.createForAgent('S2', 'opencode', testRepo, 'main');
+    const report = await manager.detectConflicts();
+    expect(report.hasConflicts).toBe(false);
+    expect(report.conflicts).toEqual([]);
+  });
+
+  it('should detect conflict when same file modified in multiple worktrees', async () => {
+    const a = await manager.createForAgent('S1', 'claude', testRepo, 'main');
+    const b = await manager.createForAgent('S2', 'opencode', testRepo, 'main');
+    // Modify README.md in both worktrees (unstaged diff)
+    fs.writeFileSync(path.join(a.worktreePath, 'README.md'), '# Changed by claude');
+    fs.writeFileSync(path.join(b.worktreePath, 'README.md'), '# Changed by opencode');
+    const report = await manager.detectConflicts();
+    expect(report.hasConflicts).toBe(true);
+    expect(report.conflicts.length).toBeGreaterThanOrEqual(1);
+    expect(report.conflicts[0].file).toBe('README.md');
+    expect(report.conflicts[0].worktrees.length).toBeGreaterThanOrEqual(2);
+  });
 });
