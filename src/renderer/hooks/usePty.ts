@@ -211,7 +211,7 @@ export function usePty(agent: string, cwd: string, container: HTMLDivElement | n
           // Only matches structured patterns like "Session ID: <id>" or "Session: <uuid>"
           // Skip if the output looks like an error (e.g. "No conversation found with session ID: ...")
           if (!sessionIdCaptured) {
-            const hasErrorContext = /no conversation|not found|could not|failed to|error/i.test(clean);
+            const hasErrorContext = /no conversation|not found|could not|failed to|error/i.test(data);
             if (!hasErrorContext) {
               const sidMatch = data.match(/session\s*(?:id)?\s*[:：]\s*([a-f0-9\-]{8,}|ses_\w{8,}|[\w-]{20,})/i);
               if (sidMatch && sessionRef.current) {

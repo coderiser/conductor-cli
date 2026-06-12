@@ -33,14 +33,8 @@ export function NotifyPanel({ visible, onClose, onJumpToSession }: NotifyPanelPr
   const fetchNotifications = async () => {
     try {
       const result = await window.electronAPI.getNotifications(false);
-      if (result && !Array.isArray(result)) {
-        // Handle both array and object-wrapped responses
-        const notifs = result.notifications || result;
-        if (Array.isArray(notifs)) {
-          setNotifications(notifs);
-        }
-      } else if (Array.isArray(result)) {
-        setNotifications(result);
+      if (Array.isArray(result)) {
+        setNotifications(result as Notification[]);
       }
     } catch (err) {
       console.error('[NotifyPanel] Failed to fetch notifications:', err);
