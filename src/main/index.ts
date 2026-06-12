@@ -11,6 +11,7 @@ import { ContextShare } from './context-share.js';
 import { EmbeddedBrowser } from './embedded-browser.js';
 import { WorktreeManager } from './worktree-manager.js';
 import { WorktreeWatcher } from './worktree-watcher.js';
+import { loadAgentConfig } from './agent-config.js';
 
 let mainWindow: BrowserWindow | null = null;
 let daemonClient: DaemonClient | null = null;
@@ -22,6 +23,7 @@ let contextShare: ContextShare | null = null;
 let embeddedBrowser: EmbeddedBrowser | null = null;
 let worktreeManager: WorktreeManager | null = null;
 let worktreeWatcher: WorktreeWatcher | null = null;
+const sessionAgentMap = new Map<string, string>(); // sessionId -> agentId
 
 async function createWindow() {
   mainWindow = new BrowserWindow({
@@ -96,6 +98,9 @@ async function createWindow() {
 
   // Wire daemon events to stats collector and notify center
   daemonClient.on('spawned', (msg: any) => {
+    if (msg.sessionId && msg.agent) {
+      sessionAgentMap.set(msg.sessionId, msg.agent);
+    }
     if (statsCollector && msg.sessionId) {
       statsCollector.trackSession(msg.sessionId, msg.agent || '', '');
       statsCollector.updateStatus(msg.sessionId, 'running');
@@ -137,6 +142,8 @@ async function createWindow() {
     if (watchdog && msg.sessionId) {
       watchdog.unregister(msg.sessionId);
     }
+    // Auto-cleanup worktree based on agent's configured cleanup policy
+    handleWorktreeCleanup(msg.sessionId, msg.agent);
   });
 
   if (!app.isPackaged && process.env.ELECTRON_RENDERER_URL) {
@@ -185,6 +192,63 @@ app.on('before-quit', () => {
   statsCollector?.dispose();
   daemonClient?.destroy();
 });
+
+async function handleWorktreeCleanup(sessionId: string, agentId?: string): Promise<void> {
+  if (!worktreeManager || !worktreeWatcher) return;
+  const info = worktreeManager.getBySession(sessionId);
+  if (!info) return;
+
+  // Resolve cleanup policy from agent config
+  const effectiveAgent = agentId || sessionAgentMap.get(sessionId);
+  const agents = loadAgentConfig();
+  const cfg = agents.find(a => a.id === effectiveAgent);
+  const cleanup = cfg?.worktree?.cleanup ?? 'keep';
+
+  if (cleanup === 'keep') {
+    console.log(`[Worktree] Keeping worktree for ${sessionId} (policy: keep)`);
+    return;
+  }
+
+  if (cleanup === 'ask') {
+    mainWindow?.webContents.send('worktree-cleanup-ask', {
+      sessionId,
+      agentId: effectiveAgent,
+      worktreePath: info.worktreePath,
+      branch: info.branch,
+      baseBranch: info.baseBranch,
+    });
+    return;
+  }
+
+  // cleanup === 'merge'
+  if (cleanup === 'merge') {
+    try {
+      const simpleGit = await import('simple-git');
+      const git = simpleGit.default(info.projectPath);
+      // Checkout base branch and merge the worktree branch
+      await git.raw(['checkout', info.baseBranch]).catch(() => {});
+      const mergeResult = await git.raw(['merge', info.branch, '--no-edit']);
+      console.log(`[Worktree] Merged ${info.branch} into ${info.baseBranch}:`, mergeResult.trim().slice(0, 120));
+
+      // Clean up the worktree
+      await worktreeManager.cleanup(sessionId, { keepBranch: false, force: true });
+      worktreeWatcher.unwatch(sessionId);
+      mainWindow?.webContents.send('worktree-merged', {
+        sessionId, branch: info.branch, baseBranch: info.baseBranch,
+      });
+    } catch (err) {
+      console.warn(`[Worktree] Merge failed for ${sessionId}, keeping worktree:`, err);
+      mainWindow?.webContents.send('worktree-merge-conflict', {
+        sessionId,
+        agentId: effectiveAgent,
+        worktreePath: info.worktreePath,
+        branch: info.branch,
+        baseBranch: info.baseBranch,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+}
 
 function persistStats() {
   if (statsCollector) {
