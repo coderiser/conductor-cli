@@ -29,6 +29,14 @@ export interface ElectronAPI {
   markContextConsumed: (id: string) => Promise<void>;
   onNewContext: (callback: (entry: any) => void) => () => void;
 
+  // Embedded Browser APIs
+  createBrowser: (url: string, sessionId: string) => Promise<any>;
+  navigateBrowser: (id: string, url: string) => Promise<void>;
+  evaluateBrowser: (id: string, code: string) => Promise<any>;
+  screenshotBrowser: (id: string) => Promise<string>;
+  destroyBrowser: (id: string) => Promise<void>;
+  listBrowsers: () => Promise<any[]>;
+
   // Window controls
   closeWindow: () => void;
 }

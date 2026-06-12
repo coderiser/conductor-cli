@@ -61,6 +61,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => { ipcRenderer.removeListener('ctx_new_entry', handler); };
   },
 
+  // Embedded Browser APIs
+  createBrowser: (url: string, sessionId: string) => ipcRenderer.invoke('browser_create', url, sessionId),
+  navigateBrowser: (id: string, url: string) => ipcRenderer.invoke('browser_navigate', id, url),
+  evaluateBrowser: (id: string, code: string) => ipcRenderer.invoke('browser_evaluate', id, code),
+  screenshotBrowser: (id: string) => ipcRenderer.invoke('browser_screenshot', id),
+  destroyBrowser: (id: string) => ipcRenderer.invoke('browser_destroy', id),
+  listBrowsers: () => ipcRenderer.invoke('browser_list'),
+
   // Window controls
   closeWindow: () => ipcRenderer.send('window-close'),
 });

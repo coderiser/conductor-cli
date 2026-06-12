@@ -8,10 +8,11 @@ import { NotifyCenter } from './notify-center.js';
 import type { DaemonMessage } from '../daemon/protocol/messages.js';
 import type { TaskQueue } from './task-queue.js';
 import type { ContextShare } from './context-share.js';
+import type { EmbeddedBrowser } from './embedded-browser.js';
 import type { TaskRecord } from '../common/stats-types';
 import type { AgentCapability } from '../common/agent-protocol';
 
-export function setupIpcHandlers(daemonClient: DaemonClient, mainWindow: BrowserWindow, statsCollector: StatsCollector, notifyCenter: NotifyCenter, taskQueue: TaskQueue, contextShare: ContextShare): void {
+export function setupIpcHandlers(daemonClient: DaemonClient, mainWindow: BrowserWindow, statsCollector: StatsCollector, notifyCenter: NotifyCenter, taskQueue: TaskQueue, contextShare: ContextShare, embeddedBrowser: EmbeddedBrowser): void {
   // Return the project directory (main process cwd) to the renderer
   ipcMain.on('get_project_dir', (event) => {
     event.returnValue = process.cwd();
@@ -154,6 +155,32 @@ export function setupIpcHandlers(daemonClient: DaemonClient, mainWindow: Browser
     contextShare.markConsumed(id);
     const entry = contextShare.get(id);
     if (entry) saveContextEntry(entry);
+  });
+
+  // ── Embedded Browser handlers (Phase 4) ────────────────────────────────
+
+  ipcMain.handle('browser_create', (_e, url: string, sessionId: string) => {
+    return embeddedBrowser.create(url, sessionId);
+  });
+
+  ipcMain.handle('browser_navigate', (_e, id: string, url: string) => {
+    embeddedBrowser.navigate(id, url);
+  });
+
+  ipcMain.handle('browser_evaluate', (_e, id: string, code: string) => {
+    return embeddedBrowser.evaluate(id, code);
+  });
+
+  ipcMain.handle('browser_screenshot', (_e, id: string) => {
+    return embeddedBrowser.screenshot(id);
+  });
+
+  ipcMain.handle('browser_destroy', (_e, id: string) => {
+    embeddedBrowser.destroy(id);
+  });
+
+  ipcMain.handle('browser_list', () => {
+    return embeddedBrowser.list();
   });
 }
 
