@@ -14,15 +14,49 @@ import type { AgentCapability } from '../common/agent-protocol';
 import type { WorktreeManager } from './worktree-manager.js';
 import type { WorktreeWatcher } from './worktree-watcher.js';
 
-export function setupIpcHandlers(daemonClient: DaemonClient, mainWindow: BrowserWindow, statsCollector: StatsCollector, notifyCenter: NotifyCenter, taskQueue: TaskQueue, contextShare: ContextShare, embeddedBrowser: EmbeddedBrowser): void {
+export function setupIpcHandlers(daemonClient: DaemonClient, mainWindow: BrowserWindow, statsCollector: StatsCollector, notifyCenter: NotifyCenter, taskQueue: TaskQueue, contextShare: ContextShare, embeddedBrowser: EmbeddedBrowser, worktreeManager?: WorktreeManager): void {
   // Return the project directory (main process cwd) to the renderer
   ipcMain.on('get_project_dir', (event) => {
     event.returnValue = process.cwd();
   });
 
   // Request/response: renderer → main → daemon
-  ipcMain.handle('pty_spawn', async (_, args: { agent: string; cwd: string; cols: number; rows: number; agentSessionId?: string; isRestore: boolean }) => {
-    return daemonClient.request({ type: 'spawn', ...args });
+  ipcMain.handle('pty_spawn', async (_, args: {
+    agent: string; cwd: string; cols: number; rows: number;
+    agentSessionId?: string; isRestore: boolean;
+    useWorktree?: boolean; sessionId?: string; agentId?: string;
+  }) => {
+    let spawnCwd = args.cwd;
+    // Create isolated worktree if requested
+    if (args.useWorktree && worktreeManager && args.sessionId && args.agentId) {
+      try {
+        const info = await worktreeManager.createForAgent(
+          args.sessionId, args.agentId, args.cwd, 'main',
+        );
+        spawnCwd = info.worktreePath;
+        // Persist
+        saveWorktree({
+          id: info.id, session_id: info.sessionId,
+          agent_id: info.agentId, worktree_path: info.worktreePath,
+          branch: info.branch, base_branch: info.baseBranch,
+          project_path: info.projectPath, created_at: info.createdAt,
+          status: info.status,
+        });
+        mainWindow.webContents.send(`worktree-created-${args.sessionId}`, info);
+      } catch (err) {
+        console.error('[Worktree] Failed to create worktree for spawn:', err);
+        // Continue with original cwd — graceful degradation
+      }
+    }
+    return daemonClient.request({
+      type: 'spawn',
+      agent: args.agent,
+      cwd: spawnCwd,
+      cols: args.cols,
+      rows: args.rows,
+      agentSessionId: args.agentSessionId,
+      isRestore: args.isRestore,
+    });
   });
 
   // Fire-and-forget: renderer → main → daemon

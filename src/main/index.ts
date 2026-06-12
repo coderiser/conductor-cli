@@ -1,14 +1,16 @@
 import { app, BrowserWindow, globalShortcut } from 'electron';
 import path from 'path';
 import { DaemonClient } from './daemon-client.js';
-import { setupIpcHandlers, setupDatabaseIpcHandlers } from './ipc-handlers.js';
-import { initDatabase, saveAgentStats } from './database.js';
+import { setupIpcHandlers, setupDatabaseIpcHandlers, setupWorktreeIpcHandlers } from './ipc-handlers.js';
+import { initDatabase, saveAgentStats, loadWorktrees } from './database.js';
 import { StatsCollector } from './stats-collector.js';
 import { NotifyCenter } from './notify-center.js';
 import { AgentWatchdog } from './agent-watchdog.js';
 import { TaskQueue } from './task-queue.js';
 import { ContextShare } from './context-share.js';
 import { EmbeddedBrowser } from './embedded-browser.js';
+import { WorktreeManager } from './worktree-manager.js';
+import { WorktreeWatcher } from './worktree-watcher.js';
 
 let mainWindow: BrowserWindow | null = null;
 let daemonClient: DaemonClient | null = null;
@@ -18,6 +20,8 @@ let watchdog: AgentWatchdog | null = null;
 let taskQueue: TaskQueue | null = null;
 let contextShare: ContextShare | null = null;
 let embeddedBrowser: EmbeddedBrowser | null = null;
+let worktreeManager: WorktreeManager | null = null;
+let worktreeWatcher: WorktreeWatcher | null = null;
 
 async function createWindow() {
   mainWindow = new BrowserWindow({
@@ -68,8 +72,27 @@ async function createWindow() {
   // ── Phase 4: Embedded Browser ──────────────────────────────────────────
   embeddedBrowser = new EmbeddedBrowser(mainWindow);
 
+  // ── Phase 5: Worktree Isolation ───────────────────────────────────────
+  worktreeManager = new WorktreeManager();
+  worktreeWatcher = new WorktreeWatcher({ debounceMs: 300 });
+
+  // Restore persisted worktrees from database
+  try {
+    const rows = loadWorktrees();
+    for (const row of rows) {
+      if (row.status === 'ready' || row.status === 'creating') {
+        worktreeManager.restoreFromRow(row);
+        worktreeWatcher.watch(row.session_id, row.worktree_path);
+      }
+    }
+    console.log(`[Worktree] Restored ${rows.length} persisted worktree(s)`);
+  } catch (err) {
+    console.error('[Worktree] Failed to restore persisted worktrees:', err);
+  }
+
   // Set up IPC bridge between renderer and daemon
-  setupIpcHandlers(daemonClient, mainWindow, statsCollector, notifyCenter, taskQueue, contextShare, embeddedBrowser);
+  setupIpcHandlers(daemonClient, mainWindow, statsCollector, notifyCenter, taskQueue, contextShare, embeddedBrowser, worktreeManager);
+  setupWorktreeIpcHandlers(worktreeManager!, worktreeWatcher!);
 
   // Wire daemon events to stats collector and notify center
   daemonClient.on('spawned', (msg: any) => {
@@ -144,6 +167,8 @@ app.whenReady().then(async () => {
 app.on('window-all-closed', () => {
   watchdog?.stop();
   embeddedBrowser?.destroyAll();
+  worktreeWatcher?.dispose();
+  worktreeManager?.dispose();
   persistStats();
   statsCollector?.dispose();
   daemonClient?.destroy();
@@ -154,6 +179,8 @@ app.on('window-all-closed', () => {
 app.on('before-quit', () => {
   watchdog?.stop();
   embeddedBrowser?.destroyAll();
+  worktreeWatcher?.dispose();
+  worktreeManager?.dispose();
   persistStats();
   statsCollector?.dispose();
   daemonClient?.destroy();
