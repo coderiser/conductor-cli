@@ -124,6 +124,18 @@ describe('TaskQueue', () => {
     expect(t!.startedAt).toBeGreaterThan(0);
   });
 
+  it('should record worktree path on dispatch', () => {
+    const task = queue.enqueue({
+      title: 'Isolated task',
+      description: '',
+      priority: 'normal',
+      requiredCapabilities: ['code-gen'],
+    });
+    queue.dispatch(task.id, 'S1', '/home/user/.conductor/worktrees/abc123/claude-20260612-a1b2');
+    const t = queue.get(task.id);
+    expect(t!.worktreePath).toBe('/home/user/.conductor/worktrees/abc123/claude-20260612-a1b2');
+  });
+
   it('should return stats summary', () => {
     queue.enqueue({ title: 'A', description: '', priority: 'high', requiredCapabilities: ['shell'] });
     queue.enqueue({ title: 'B', description: '', priority: 'normal', requiredCapabilities: ['code-gen'] });

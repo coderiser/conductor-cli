@@ -164,6 +164,14 @@ export function setupIpcHandlers(daemonClient: DaemonClient, mainWindow: Browser
     return taskQueue.list(status as TaskRecord['status'] | undefined);
   });
 
+  ipcMain.handle('task_dispatch', (_e, taskId: string, sessionId: string) => {
+    // Look up worktree path from manager if available
+    const wtPath = worktreeManager?.getBySession(sessionId)?.worktreePath;
+    taskQueue.dispatch(taskId, sessionId, wtPath);
+    const task = taskQueue.get(taskId);
+    if (task) saveTask(task);
+  });
+
   ipcMain.handle('task_stats', () => {
     return taskQueue.stats();
   });

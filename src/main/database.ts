@@ -59,6 +59,7 @@ export function initDatabase() {
         required_capabilities TEXT NOT NULL DEFAULT '[]',
         assigned_agent TEXT,
         assigned_session TEXT,
+        worktree_path TEXT,
         status TEXT NOT NULL DEFAULT 'pending',
         progress REAL DEFAULT 0,
         created_at INTEGER NOT NULL,
@@ -188,13 +189,14 @@ export function saveTask(task: TaskRecord): void {
   const stmt = db.prepare(`
     INSERT OR REPLACE INTO task_queue
       (id, title, description, priority, required_capabilities, assigned_agent,
-       assigned_session, status, progress, created_at, started_at, completed_at, result, error)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       assigned_session, worktree_path, status, progress, created_at, started_at, completed_at, result, error)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   stmt.run(
     task.id, task.title, task.description, task.priority,
     JSON.stringify(task.requiredCapabilities), task.assignedAgent ?? null,
-    task.assignedSession ?? null, task.status, task.progress, task.createdAt,
+    task.assignedSession ?? null, task.worktreePath ?? null,
+    task.status, task.progress, task.createdAt,
     task.startedAt ?? null, task.completedAt ?? null, task.result ?? null, task.error ?? null
   );
 }
@@ -206,6 +208,7 @@ export function loadTasks(): TaskRecord[] {
     id: r.id, title: r.title, description: r.description,
     priority: r.priority, requiredCapabilities: JSON.parse(r.required_capabilities),
     assignedAgent: r.assigned_agent, assignedSession: r.assigned_session,
+    worktreePath: r.worktree_path,
     status: r.status, progress: r.progress, createdAt: r.created_at,
     startedAt: r.started_at, completedAt: r.completed_at,
     result: r.result, error: r.error,

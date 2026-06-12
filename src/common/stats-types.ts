@@ -108,6 +108,7 @@ export interface TaskRecord {
   requiredCapabilities: string[];
   assignedAgent?: string;
   assignedSession?: string;
+  worktreePath?: string;
   status: 'pending' | 'queued' | 'running' | 'done' | 'failed';
   progress: number;
   createdAt: number;

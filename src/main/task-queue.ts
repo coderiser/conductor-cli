@@ -58,10 +58,11 @@ export class TaskQueue {
     return bestAgent;
   }
 
-  dispatch(taskId: string, sessionId: string): void {
+  dispatch(taskId: string, sessionId: string, worktreePath?: string): void {
     const task = this.tasks.get(taskId);
     if (!task) return;
     task.assignedSession = sessionId;
+    task.worktreePath = worktreePath;
     task.status = 'running';
     task.startedAt = Date.now();
   }
