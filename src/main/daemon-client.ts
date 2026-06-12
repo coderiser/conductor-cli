@@ -6,6 +6,7 @@ import { app } from 'electron';
 import { encodeFrame, FrameDecoder } from '../daemon/protocol/framing.js';
 import type { ClientMessage, DaemonMessage } from '../daemon/protocol/messages.js';
 import { DEFAULT_AGENTS } from './agent-config.js';
+import { resolveSafeLocalDir } from '../common/platform.js';
 
 const PIPE_PATH = '\\\\.\\pipe\\conductor-pty-daemon';
 
@@ -18,6 +19,7 @@ export class DaemonClient {
   private messageHandlers = new Map<string, ((msg: DaemonMessage) => void)[]>();
   private requestResolvers: ((msg: DaemonMessage) => void)[] = [];
   private requestId = 1;
+  private daemonPid: number | null = null; // PID of daemon we spawned (for cleanup)
 
   /**
    * Connect to the PTY Daemon.
@@ -36,14 +38,32 @@ export class DaemonClient {
     // Ensure agents.json is available in userData for the daemon to read
     this.ensureAgentsConfig();
 
-    // Start daemon process with config path in environment
+    // Start daemon process with config path in environment.
+    // IMPORTANT: Explicitly set cwd to a safe local directory. Without this,
+    // the daemon inherits Electron's cwd, which can be a UNC path if the app
+    // was launched from a network share. A UNC daemon cwd causes "CMD 不支持
+    // 将 UNC 路径作为当前目录" errors when node-pty spawns cmd.exe children.
     const daemonScript = path.join(app.getAppPath(), 'dist', 'daemon', 'main.js');
     const configPath = path.join(app.getPath('userData'), 'agents.json');
+    const daemonCwd = resolveSafeLocalDir(app.getPath('temp'));
+
+    let stderrLog: number | null = null;
+    try {
+      const logDir = app.getPath('userData');
+      fs.mkdirSync(logDir, { recursive: true });
+      stderrLog = fs.openSync(path.join(logDir, 'daemon-stderr.log'), 'a');
+    } catch (e) {
+      console.error('[DaemonClient] Failed to open stderr log:', e);
+    }
+
     const daemonProcess = spawn('node', [daemonScript], {
-      stdio: 'ignore',
+      stdio: ['ignore', 'ignore', stderrLog ?? 'ignore'],
       detached: true,
+      windowsHide: true, // hide console window on Windows
+      cwd: daemonCwd,
       env: { ...process.env, CONDUCTOR_AGENTS_CONFIG: configPath },
     });
+    this.daemonPid = daemonProcess.pid ?? null;
     daemonProcess.unref();
 
     // Wait for daemon to be ready, then connect
@@ -115,6 +135,7 @@ export class DaemonClient {
 
   private setupSocketHandlers(): void {
     if (!this.socket) return;
+    const mySocket = this.socket; // capture reference to detect stale close events
 
     this.socket.on('data', (data: Buffer) => {
       const messages = this.decoder.push(data);
@@ -124,6 +145,9 @@ export class DaemonClient {
     });
 
     this.socket.on('close', () => {
+      // Only react if this is still the active socket — prevents a stale probe
+      // socket's async close event from clobbering a newer real connection.
+      if (this.socket !== mySocket) return;
       console.log('[DaemonClient] Disconnected from PTY Daemon');
       this.socket = null;
       // Reject all pending request resolvers
@@ -210,11 +234,25 @@ export class DaemonClient {
     }
   }
 
-  /** Disconnect and clear all handlers. */
+  /** Disconnect and clear all handlers. Kills daemon if we spawned it. */
   destroy(): void {
     this.disconnect();
+    this.killDaemon();
     this.messageHandlers.clear();
     this.rejectPendingRequests('Client destroyed');
+  }
+
+  /** Kill the daemon process if we spawned it. */
+  private killDaemon(): void {
+    if (this.daemonPid) {
+      try {
+        process.kill(this.daemonPid, 'SIGTERM');
+        console.log(`[DaemonClient] Killed daemon process ${this.daemonPid}`);
+      } catch {
+        // Process may have already exited
+      }
+      this.daemonPid = null;
+    }
   }
 
   /**

@@ -8,15 +8,18 @@ interface PanelEntry { id: string; agent: string; dockId: string; ptyId?: string
 let nextN = 1;
 const genUUID = () => crypto.randomUUID?.() || 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => { const r = Math.random()*16|0; return (c==='x'?r:r&0x3|0x8).toString(16); });
 const now = () => new Date().toLocaleTimeString('en-US', { hour12: false });
+const projectDir = () => (window as any).electronAPI?.projectDir?.() || '.';
 
 // Save panels to SQLite on every change (real-time persistence)
 function savePanelsToDb(panels: PanelEntry[]) {
   window.electronAPI.invoke('save_layout', {
     dockviewJson: '[]',
     sessions: panels.map(p => {
-      let sid = (p.agent === 'cmd' || p.agent === 'cmd.exe') ? '' : (p.resumeId || '');
+      // Don't save session IDs for cmd (no session concept)
+      const isCmd = p.agent === 'cmd' || p.agent === 'cmd.exe';
+      let sid = isCmd ? '' : (p.resumeId || '');
       if (p.agent === 'opencode' && sid && !sid.startsWith('ses_')) sid = '';
-      return { id: p.dockId, agent: p.agent, cwd: p.cwd === '.' ? '' : p.cwd, agent_session_id: sid };
+      return { id: p.dockId, agent: p.agent || '', cwd: p.cwd || '.', agent_session_id: sid || '' };
     }),
     windowWidth: window.innerWidth, windowHeight: window.innerHeight,
   }).catch((err) => { console.error('Failed to save layout:', err); });
@@ -44,10 +47,13 @@ export default function App() {
         if (layout?.sessions?.length > 0) {
           const restored: PanelEntry[] = layout.sessions.map((s: any) => {
             const id = `term-${nextN++}`;
-            return { id, dockId: id, agent: s.agent, cwd: s.cwd || '.', createdAt: Date.now(), running: true,
+            // Resume if we have a saved session ID (usePty has fallback detection
+            // for failed resumes — detects "No conversation found" and starts fresh).
+            const canResume = !!s.agent_session_id;
+            return { id, dockId: id, agent: s.agent, cwd: s.cwd || projectDir(), createdAt: Date.now(), running: true,
               status: 'starting', needsAttention: false, exited: false,
-              resumeId: s.agent_session_id || undefined,
-              isRestored: !!(s.agent_session_id) };
+              resumeId: canResume ? s.agent_session_id : undefined,
+              isRestored: !!canResume };
           });
           restored.forEach((r) => add({ id: `S${nextN++}`, agent: r.agent, dockviewId: r.dockId, ptyId: '' }));
           setPanels(restored);
@@ -62,7 +68,8 @@ export default function App() {
   const createDefault = () => {
     const id = `term-${nextN++}`;
     const rid = genUUID();
-    setPanels([{ id, agent: 'cmd.exe', dockId: id, cwd: '.', createdAt: Date.now(), running: true, status: 'starting', needsAttention: false, exited: false, resumeId: rid }]);
+    const dir = projectDir();
+    setPanels([{ id, agent: 'cmd.exe', dockId: id, cwd: dir, createdAt: Date.now(), running: true, status: 'starting', needsAttention: false, exited: false, resumeId: rid }]);
     add({ id: 'S1', agent: 'cmd.exe', dockviewId: id, ptyId: '' });
     addLog('cmd.exe started', 'var(--running)');
   };
@@ -83,7 +90,7 @@ export default function App() {
 
   const addTerminal = useCallback((agent: string, cwd?: string) => {
     const id = `term-${nextN++}`;
-    const dir = cwd || '.';
+    const dir = cwd || projectDir();
     const resumeId = genUUID();
     setPanels((prev) => [...prev, { id, agent, dockId: id, cwd: dir, createdAt: Date.now(), running: true, status: 'starting', needsAttention: false, exited: false, resumeId }]);
     setActiveIdx(panels.length);
@@ -156,7 +163,7 @@ export default function App() {
           return (
             <div key={p.dockId} onClick={() => setActiveIdx(c.idx)}
               style={{ gridRow: c.row + 1, gridColumn: `${c.colStart} / span ${c.colSpan}`, border: c.idx === activeIdx ? '2px solid var(--accent)' : (p.needsAttention ? '2px solid var(--accent)' : '1px solid var(--hairline)'), position: 'relative', overflow: 'hidden', minWidth: 0, minHeight: 0 }}>
-              <TerminalPanel agent={p.agent} cwd={p.cwd !== '.' ? p.cwd : undefined} resumeId={p.resumeId} isRestore={!!p.isRestored}
+              <TerminalPanel agent={p.agent} cwd={p.cwd || '.'} resumeId={p.resumeId} isRestore={!!p.isRestored}
                 onFocus={() => setActiveIdx(c.idx)}
                 onSessionId={(sid) => {
                   setPanels((prev) => prev.map((pp) => pp.dockId === p.dockId ? { ...pp, resumeId: sid } : pp));

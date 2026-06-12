@@ -6,6 +6,11 @@ import { getGitStatus } from './git-integration.js';
 import type { DaemonMessage } from '../daemon/protocol/messages.js';
 
 export function setupIpcHandlers(daemonClient: DaemonClient, mainWindow: BrowserWindow): void {
+  // Return the project directory (main process cwd) to the renderer
+  ipcMain.on('get_project_dir', (event) => {
+    event.returnValue = process.cwd();
+  });
+
   // Request/response: renderer → main → daemon
   ipcMain.handle('pty_spawn', async (_, args: { agent: string; cwd: string; cols: number; rows: number; agentSessionId?: string; isRestore: boolean }) => {
     return daemonClient.request({ type: 'spawn', ...args });

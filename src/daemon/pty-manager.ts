@@ -1,8 +1,19 @@
 import * as pty from 'node-pty';
+import path from 'path';
+import fs from 'fs';
+import crypto from 'crypto';
 import { SessionStore } from './session-store.js';
 import { SessionInfo } from './protocol/messages.js';
 import { loadAgentConfig, type AgentConfig } from './agent-config.js';
 import { discoverSessionIds } from './session-recovery.js';
+import { resolveSafeLocalDir } from '../common/platform.js';
+
+const DEBUG_LOG = path.join(process.env.USERPROFILE || process.env.TEMP || 'C:\\', 'conductor-daemon.log');
+function debugLog(msg: string) {
+  const line = `${new Date().toISOString()} ${msg}\n`;
+  process.stderr.write(`[DEBUG] ${line}`);
+  try { fs.appendFileSync(DEBUG_LOG, line); } catch { /* ignore */ }
+}
 
 export type OutputCallback = (sessionId: string, data: string) => void;
 export type ExitCallback = (sessionId: string, code: number) => void;
@@ -19,6 +30,32 @@ export class PtyManager {
     private onExit: ExitCallback,
     private onSessionIdDiscovered?: SessionIdDiscoveredCallback
   ) {
+    // CRITICAL: Ensure the daemon's own cwd is never a UNC path.
+    debugLog(`PtyManager constructor: process.cwd()=${process.cwd()}, pid=${process.pid}`);
+    // cmd.exe cannot start with a UNC current directory ("CMD 不支持将 UNC 路径作为当前目录").
+    // The daemon inherits its cwd from the Electron main process (see daemon-client.ts spawn).
+    // If Electron was launched from a UNC location, the daemon's process.cwd() is UNC,
+    // and node-pty/ConPTY on Windows may pass that to child processes regardless of
+    // the explicit cwd option. Change to a safe local directory before any spawns.
+    if (process.platform === 'win32') {
+      try {
+        const cwdStr = process.cwd();
+        if (cwdStr.startsWith('\\\\')) {
+          const safeDir = resolveSafeLocalDir();
+          console.log(`[PtyManager] Daemon cwd is UNC (${cwdStr}), changing to ${safeDir}`);
+          debugLog(`[PtyManager] Daemon cwd is UNC (${cwdStr}), changing to ${safeDir}`);
+          process.chdir(safeDir);
+        }
+      } catch (e) {
+        // process.cwd() can throw if the current directory was deleted
+        // process.chdir can throw if the target doesn't exist
+        const safeDir = resolveSafeLocalDir();
+        console.log(`[PtyManager] process.cwd() failed, changing to ${safeDir}`);
+        debugLog(`[PtyManager] process.cwd() failed, changing to ${safeDir}`);
+        try { process.chdir(safeDir); } catch { /* non-fatal */ }
+      }
+    }
+
     for (const cfg of loadAgentConfig()) {
       this.agentConfigs.set(cfg.id, cfg);
     }
@@ -31,6 +68,16 @@ export class PtyManager {
     const agentConfig = this.getAgentConfig(agent);
     let command = agentConfig.command;
     let args: string[] = [...agentConfig.args];
+
+    // FIX: For new sessions (not restore), if the agent has a createTemplate but
+    // no agentSessionId was provided, generate a UUID so the agent uses it.
+    // This ensures we ALWAYS know the session ID for resume (no reliance on regex capture).
+    // Without this, Claude Code creates its own UUID internally and we can't reliably
+    // capture it from terminal output (ANSI codes, chunked delivery, format variations).
+    if (!agentSessionId && !isRestore && agentConfig.createTemplate) {
+      agentSessionId = crypto.randomUUID();
+      debugLog(`Generated session ID for new ${agent} session: ${agentSessionId}`);
+    }
 
     // 模板替换
     if (agentSessionId) {
@@ -52,22 +99,65 @@ export class PtyManager {
     }
 
     // Windows: 通过 cmd.exe 启动以设置 cwd
+    // UNC paths (\\server\share) cannot be used as the process cwd on Windows —
+    // CreateProcessW rejects them. Use a safe fallback for the OS-level cwd and
+    // rely on pushd inside cmd.exe to navigate to the real target.
+    //
+    // CRITICAL: Resolve relative paths to absolute BEFORE checking for UNC.
+    // A relative path like '.' resolves against process.cwd() — if the daemon's
+    // cwd is UNC, '.' becomes a UNC path. node-pty passes cwd directly to
+    // CreateProcessW, which rejects UNC paths on Windows.
+    const safeHome = resolveSafeLocalDir();
+    const resolvedCwd = path.resolve(cwd || '.');
+    const isUNC = process.platform === 'win32' && resolvedCwd.startsWith('\\\\');
+    const spawnCwd = (process.platform === 'win32' && isUNC)
+      ? safeHome
+      : resolvedCwd;
+
     let finalCommand = command;
     let finalArgs = args;
 
-    if (process.platform === 'win32' && command !== 'cmd.exe') {
-      const cmdline = `pushd "${cwd}" && ${command} ${args.join(' ')}`;
+    if (process.platform === 'win32' && isUNC) {
+      // UNC path: must use pushd because cmd.exe can't start with UNC cwd
       finalCommand = 'cmd.exe';
-      finalArgs = ['/k', cmdline];
+      if (command === 'cmd.exe' && args.length >= 2 && args[0] === '/k') {
+        // Setup wrapping: inject pushd at the start of the existing /k chain
+        // Use short name or avoid quotes if possible to prevent escaping issues
+        finalArgs = ['/k', `pushd ${resolvedCwd} && ${args[1]}`];
+      } else if (command === 'cmd.exe') {
+        // Bare cmd.exe: just pushd into the UNC path (no nested cmd.exe)
+        finalArgs = ['/k', `pushd ${resolvedCwd}`];
+      } else {
+        finalArgs = ['/k', `pushd ${resolvedCwd} && ${command} ${args.join(' ')}`];
+      }
+    } else if (process.platform === 'win32' && command !== 'cmd.exe') {
+      // Wrap in cmd.exe /c for .cmd/.bat wrappers (npm-installed commands like opencode, claude)
+      finalCommand = 'cmd.exe';
+      finalArgs = ['/c', `${command}${args.length ? ' ' + args.join(' ') : ''}`];
+    }
+
+    // FIX: Capture prevIds BEFORE spawning to avoid race condition.
+    // OpenCode can create its session file in milliseconds after starting.
+    // If we capture prevIds after spawn, the new session may appear in both
+    // prev and current snapshots, making the diff miss it entirely.
+    let prevSessionIds: Set<string> | null = null;
+    if (agent === 'opencode' || agent === 'codex') {
+      prevSessionIds = new Set(discoverSessionIds(agent, resolvedCwd));
+      debugLog(`discovery: prevIds for ${agent} = [${[...prevSessionIds].join(', ')}]`);
     }
 
     let ptyProcess: pty.IPty;
     try {
+      console.log(`[PtyManager] spawn: agent=${agent}, rawCwd=${cwd}, resolvedCwd=${resolvedCwd}, isUNC=${isUNC}, spawnCwd=${spawnCwd}`);
+      console.log(`[PtyManager] spawn: finalCommand=${finalCommand}, finalArgs=${JSON.stringify(finalArgs)}`);
+      debugLog(`spawn: agent=${agent}, rawCwd=${cwd}, resolvedCwd=${resolvedCwd}, isUNC=${isUNC}, spawnCwd=${spawnCwd}`);
+      debugLog(`spawn: finalCommand=${finalCommand}, finalArgs=${JSON.stringify(finalArgs)}`);
+
       ptyProcess = pty.spawn(finalCommand, finalArgs, {
         name: 'xterm-256color',
         cols,
         rows,
-        cwd,
+        cwd: spawnCwd,
         env: process.env as { [key: string]: string }
       });
     } catch (error) {
@@ -97,21 +187,35 @@ export class PtyManager {
       this.onExit(sessionId, exitCode);
     });
 
-    // Session Recovery: before/after snapshot diff for opencode/codex
-    if ((agent === 'opencode' || agent === 'codex') && !agentSessionId) {
-      const prevIds = new Set(discoverSessionIds(agent, cwd));
-      setTimeout(() => {
+    // Session Recovery: repeated snapshot diff for opencode/codex
+    // OpenCode TUI only creates a session file after the user sends the first message,
+    // not at startup. So a single 5s check may miss it. We retry every 10s for 60s.
+    // prevSessionIds was captured before pty.spawn() to avoid the race condition.
+    if ((agent === 'opencode' || agent === 'codex') && prevSessionIds !== null) {
+      let discoveryAttempts = 0;
+      const maxAttempts = 6; // 6 attempts × 10s = 60s window
+      const tryDiscovery = () => {
+        discoveryAttempts++;
         try {
-          const currentIds = discoverSessionIds(agent, cwd);
-          const newId = currentIds.find((id: string) => !prevIds.has(id));
+          const currentIds = discoverSessionIds(agent, resolvedCwd);
+          const newId = currentIds.find((id: string) => !prevSessionIds!.has(id));
           if (newId) {
+            debugLog(`discovery: found new ${agent} session on attempt ${discoveryAttempts}: ${newId}`);
             this.sessionStore.setAgentSessionId(sessionId, newId);
             this.onSessionIdDiscovered?.(sessionId, newId);
+            return; // found it — stop retrying
           }
-        } catch {
-          // Discovery failure is non-fatal
+        } catch (e) {
+          debugLog(`discovery: error on attempt ${discoveryAttempts} for ${agent}: ${(e as Error).message}`);
         }
-      }, 3000);
+        if (discoveryAttempts < maxAttempts) {
+          setTimeout(tryDiscovery, 10000);
+        } else {
+          debugLog(`discovery: gave up after ${maxAttempts} attempts for ${agent}`);
+        }
+      };
+      // First check at 5s, then every 10s
+      setTimeout(tryDiscovery, 5000);
     }
 
     return info;

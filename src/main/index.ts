@@ -11,6 +11,8 @@ async function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1400,
     height: 900,
+    icon: path.join(__dirname, '../renderer/logo.png'),
+    title: 'Conductor',
     webPreferences: {
       preload: path.join(__dirname, '../preload/index.js'),
       nodeIntegration: false,
@@ -51,6 +53,11 @@ app.whenReady().then(async () => {
 });
 
 app.on('window-all-closed', () => {
-  daemonClient?.disconnect();
+  daemonClient?.destroy(); // kills daemon if we spawned it
   app.quit();
+});
+
+// Also kill daemon on app quit (e.g., F10 shortcut, macOS Cmd+Q)
+app.on('before-quit', () => {
+  daemonClient?.destroy();
 });

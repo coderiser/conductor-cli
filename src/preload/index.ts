@@ -4,6 +4,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Request/response: renderer → main → daemon
   invoke: (channel: string, ...args: any[]) => ipcRenderer.invoke(channel, ...args),
 
+  // The directory where Conductor was launched (main process cwd)
+  projectDir: () => ipcRenderer.sendSync('get_project_dir'),
+
   // Event subscriptions: daemon → main → renderer
   onOutput: (id: string, callback: (data: string) => void) => {
     const listener = (_event: any, msg: { data: string }) => callback(msg.data);

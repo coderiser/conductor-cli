@@ -50,9 +50,9 @@ export function saveLayout(layout: LayoutData) {
   const saveAll = conn.transaction((sessions: LayoutData['sessions'], dockviewJson: string, windowWidth: number, windowHeight: number) => {
     conn.prepare('DELETE FROM sessions').run();
     const insert = conn.prepare('INSERT INTO sessions (id, agent, cwd, agent_session_id) VALUES (?, ?, ?, ?)');
-    for (const s of sessions) insert.run(s.id, s.agent, s.cwd, s.agent_session_id);
+    for (const s of sessions) insert.run(s.id ?? '', s.agent ?? '', s.cwd ?? '', s.agent_session_id ?? '');
     conn.prepare('INSERT OR REPLACE INTO layout (id, dockview_json, window_width, window_height) VALUES (1, ?, ?, ?)').run(
-      dockviewJson, windowWidth, windowHeight
+      dockviewJson ?? '', Number(windowWidth) || 1400, Number(windowHeight) || 900
     );
   });
   saveAll(layout.sessions, layout.dockviewJson ?? '[]', layout.windowWidth ?? 1400, layout.windowHeight ?? 900);

@@ -45,6 +45,11 @@ export class DaemonServer {
       this.clients.push(socket);
     });
 
+    this.server.on('error', (err) => {
+      console.error('Server error:', err.message);
+      throw err; // Re-throw so process.on('uncaughtException') catches it
+    });
+
     this.server.listen(this.pipePath, () => {
       console.log(`PTY Daemon listening on ${this.pipePath}`);
     });
@@ -60,8 +65,12 @@ export class DaemonServer {
         break;
       }
       case 'spawn': {
-        const info = this.ptyManager.spawn(msg.agent, msg.cwd, msg.cols, msg.rows, msg.agentSessionId, msg.isRestore);
-        response = { type: 'spawned', sessionId: info.sessionId, pid: info.pid, agent: info.agent, agentSessionId: info.agentSessionId };
+        try {
+          const info = this.ptyManager.spawn(msg.agent, msg.cwd, msg.cols, msg.rows, msg.agentSessionId, msg.isRestore);
+          response = { type: 'spawned', sessionId: info.sessionId, pid: info.pid, agent: info.agent, agentSessionId: info.agentSessionId };
+        } catch (err) {
+          response = { type: 'error', message: (err as Error).message };
+        }
         break;
       }
       case 'write': {

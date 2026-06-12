@@ -90,10 +90,95 @@ export function usePty(agent: string, cwd: string, container: HTMLDivElement | n
     const spawnTimeout = setTimeout(() => {
       term.write(`\x1b[31m● Spawn timed out (10s). Agent: ${agent}, Cwd: ${cwd}\x1b[0m\r\n`);
     }, 10000);
-    pty.spawn(agent, cwd, d?.cols ?? 80, d?.rows ?? 24, resumeId, isRestore)
+    const spawnTime = Date.now();
+    let retryAttempted = false;
+    let resumeTimeoutId: ReturnType<typeof setTimeout> | undefined;
+
+    function doSpawn(agentName: string, sessionResumeId?: string, restore = false) {
+      // FIX: For new sessions of non-cmd agents, generate a UUID in the renderer.
+      // This UUID is passed to the daemon which uses it with the agent's createTemplate
+      // (e.g. --session-id UUID for Claude). Since we generate it HERE, we already know
+      // the session ID and can save it immediately — no need to capture from output.
+      let knownSessionId: string | undefined;
+      if (!restore && !sessionResumeId && agentName !== 'cmd' && agentName !== 'cmd.exe') {
+        knownSessionId = crypto.randomUUID();
+      }
+      const effectiveSessionId = restore ? sessionResumeId : knownSessionId;
+
+      pty.spawn(agentName, cwd, d?.cols ?? 80, d?.rows ?? 24, effectiveSessionId, restore)
       .then((info) => {
         clearTimeout(spawnTimeout);
         sessionRef.current = info;
+
+        // FIX: Immediately save the session ID we generated (for new sessions).
+        // We already know the UUID since we generated it — no need to capture from output.
+        if (knownSessionId && !sessionIdCaptured) {
+          sessionIdCaptured = true;
+          onSessionId?.(knownSessionId);
+        }
+
+        // Resume monitoring: detect resume failure patterns in output
+        // Claude prints "No conversation found" when --resume fails, but doesn't exit —
+        // it hangs in an error state. We must detect this and retry without resume.
+        if (restore && sessionResumeId && !retryAttempted) {
+          let resumeResolved = false;
+          const RESUME_FAIL_PATTERNS = [
+            /no conversation found/i,
+            /could not find (?:the )?(?:conversation|session)/i,
+            /session (?:not found|doesn't exist|does not exist)/i,
+            /invalid (?:session|conversation) (?:id|identifier)/i,
+            /failed to (?:resume|restore|load)/i,
+            /requires a valid session id/i,
+            /is not a uuid/i,
+            /does not match any session/i,
+            /no (?:saved )?session/i,
+          ];
+
+          const outputMonitor = pty.onOutput(info.sessionId, (data) => {
+            if (resumeResolved) return;
+            const clean = data.replace(/\x1B\[[0-9;]*[a-zA-Z]/g, '');
+            // Check for resume failure patterns
+            for (const pattern of RESUME_FAIL_PATTERNS) {
+              if (pattern.test(clean)) {
+                resumeResolved = true;
+                if (resumeTimeoutId) clearTimeout(resumeTimeoutId);
+                outputMonitor();
+                retryAttempted = true;
+                sessionIdCaptured = false; // FIX: Reset so new session can capture its ID
+                term.write(`\r\n\x1b[33m● Resume failed: session not found. Starting new session...\x1b[0m\r\n`);
+                const oldId = sessionRef.current?.sessionId;
+                sessionRef.current = null;
+                if (oldId) pty.kill(oldId).catch(() => {});
+                setTimeout(() => doSpawn(agentName, undefined, false), 500);
+                return;
+              }
+            }
+            // Check for real interactive content (agent is actually running)
+            // Must be substantial content that isn't an error message
+            if (clean.length > 50 && !/error|failed|not found/i.test(clean)) {
+              resumeResolved = true;
+              if (resumeTimeoutId) clearTimeout(resumeTimeoutId);
+              outputMonitor();
+            }
+          });
+          cleanupRef.current.push(outputMonitor);
+
+          // Fallback timeout: if no resolution after 15s, assume stuck and retry
+          resumeTimeoutId = setTimeout(() => {
+            if (!resumeResolved && sessionRef.current?.sessionId && !retryAttempted) {
+              resumeResolved = true;
+              outputMonitor();
+              retryAttempted = true;
+              sessionIdCaptured = false; // FIX: Reset so new session can capture its ID
+              term.write(`\r\n\x1b[33m● Resume timed out (15s). Starting new session...\x1b[0m\r\n`);
+              const oldId = sessionRef.current.sessionId;
+              sessionRef.current = null;
+              pty.kill(oldId).catch(() => {});
+              setTimeout(() => doSpawn(agentName, undefined, false), 500);
+            }
+          }, 15000);
+        }
+
         // Post-spawn session ID capture for OpenCode/Codex (/rename flow)
         const unsubSid = pty.onSessionIdChanged(info.sessionId, (sid) => {
           term.write(`\x1b[35m[Session: ${sid} — will resume on restart]\x1b[0m\r\n`);
@@ -101,6 +186,17 @@ export function usePty(agent: string, cwd: string, container: HTMLDivElement | n
         });
         cleanupRef.current.push(unsubSid);
         onReady?.(info);
+
+        // FIX: Immediately capture agentSessionId from the daemon's spawn response.
+        // This is critical for the case where the daemon generates a UUID for a new
+        // Claude session (--session-id). Without this, the renderer keeps the old
+        // random resumeId that the agent doesn't recognize.
+        if (info.agentSessionId && !sessionIdCaptured) {
+          sessionIdCaptured = true;
+          onSessionId?.(info.agentSessionId);
+          term.write(`\x1b[35m[Session: ${info.agentSessionId} — will resume on restart]\x1b[0m\r\n`);
+        }
+
         cleanupRef.current.push(pty.onOutput(info.sessionId, (data) => {
           term.write(data);
           // Parse token count: requires whitespace between number and "tokens"
@@ -113,18 +209,21 @@ export function usePty(agent: string, cwd: string, container: HTMLDivElement | n
           }
           // Parse agent session ID from startup output (capture only once)
           // Only matches structured patterns like "Session ID: <id>" or "Session: <uuid>"
-          // to avoid false positives from phrases like "session permissions"
+          // Skip if the output looks like an error (e.g. "No conversation found with session ID: ...")
           if (!sessionIdCaptured) {
-            const sidMatch = data.match(/session\s*(?:id)?\s*[:：]\s*([a-f0-9\-]{8,}|ses_\w{8,}|[\w-]{20,})/i);
-            if (sidMatch && sessionRef.current) {
-              const sid = sidMatch[1];
-              sessionIdCaptured = true;
-              pty.setAgentSessionId(sessionRef.current.sessionId, sid).then(() => {
-                term.write(`\x1b[35m[Session: ${sid} — will resume on restart]\x1b[0m\r\n`);
-                onSessionId?.(sid);
-              }).catch(() => {
-                term.write(`\x1b[31m[Session: ${sid} — FAILED to save]\x1b[0m\r\n`);
-              });
+            const hasErrorContext = /no conversation|not found|could not|failed to|error/i.test(clean);
+            if (!hasErrorContext) {
+              const sidMatch = data.match(/session\s*(?:id)?\s*[:：]\s*([a-f0-9\-]{8,}|ses_\w{8,}|[\w-]{20,})/i);
+              if (sidMatch && sessionRef.current) {
+                const sid = sidMatch[1];
+                sessionIdCaptured = true;
+                pty.setAgentSessionId(sessionRef.current.sessionId, sid).then(() => {
+                  term.write(`\x1b[35m[Session: ${sid} — will resume on restart]\x1b[0m\r\n`);
+                  onSessionId?.(sid);
+                }).catch(() => {
+                  term.write(`\x1b[31m[Session: ${sid} — FAILED to save]\x1b[0m\r\n`);
+                });
+              }
             }
           }
           // Parse agent status from output (deduplicated — only update on change)
@@ -147,6 +246,18 @@ export function usePty(agent: string, cwd: string, container: HTMLDivElement | n
           }
         }));
         cleanupRef.current.push(pty.onExit(info.sessionId, (code) => {
+          if (resumeTimeoutId) clearTimeout(resumeTimeoutId);
+          // Resume fallback: if process exits quickly with error and we were restoring,
+          // retry without the resume flag (session may not exist in agent's local DB)
+          const elapsed = Date.now() - spawnTime;
+          if (code !== 0 && elapsed < 5000 && restore && sessionResumeId && !retryAttempted) {
+            retryAttempted = true;
+            sessionIdCaptured = false; // FIX: Reset so new session can capture its ID
+            term.write(`\r\n\x1b[33m● Resume failed (exit: ${code}). Starting new session...\x1b[0m\r\n`);
+            sessionRef.current = null;
+            doSpawn(agentName, undefined, false);
+            return;
+          }
           term.write(`\r\n\x1b[33m● Session ended (exit: ${code})\x1b[0m\r\n`);
           sessionRef.current = null;
           onExit?.(code);
@@ -159,10 +270,14 @@ export function usePty(agent: string, cwd: string, container: HTMLDivElement | n
         term.write(`\r\n\x1b[31m● Failed: ${err}\x1b[0m\r\n`);
         sessionRef.current = null;
       });
+    }
+
+    doSpawn(agent, resumeId, isRestore);
 
     return () => {
       clearTimeout(t1); clearTimeout(t2); clearTimeout(t3);
       clearTimeout(timerRef.current); clearTimeout(statusTimerRef.current);
+      if (resumeTimeoutId) clearTimeout(resumeTimeoutId);
       container.removeEventListener('click', focusIt);
       container.removeEventListener('contextmenu', onContextMenu);
       onDataDisposable.dispose();

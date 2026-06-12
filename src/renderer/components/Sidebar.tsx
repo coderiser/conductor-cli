@@ -86,9 +86,11 @@ export function Sidebar({ onAddTerminal, onKillCurrent, onBroadcast, stats, sess
       {/* Header */}
       <div style={{ padding:'12px 10px' }}>
         <div style={{ display:'flex', alignItems:'center', gap:10 }}>
+          {/* Conductor Logo */}
+          <img src="./logo.png" width="32" height="32" alt="Conductor" style={{ borderRadius: 6 }} />
           <div>
-            <div style={{ color:'var(--ink)', fontWeight:700, fontSize:14, letterSpacing:'-0.2px' }}>Conductor</div>
-            <div style={{ color:'var(--caption)', fontSize:10, marginTop:1 }}>Agent Workbench</div>
+            <div style={{ color:'var(--ink)', fontWeight:700, fontSize:14, letterSpacing:'-0.2px' }}>Multi-Agent Terminal</div>
+            <div style={{ color:'var(--caption)', fontSize:10, marginTop:1 }}>Workbench</div>
           </div>
         </div>
       </div>
