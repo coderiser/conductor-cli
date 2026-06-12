@@ -17,6 +17,7 @@ const config: Configuration = {
   // against Electron's Node headers, which fails with MSBuild errors.
   npmRebuild: false,
   win: {
+    icon: 'src/renderer/logo.png',
     target: ['nsis', 'portable'],
   },
   nsis: {
