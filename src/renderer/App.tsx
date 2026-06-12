@@ -8,6 +8,7 @@ import { ContextFeed } from './components/ContextFeed';
 import { BrowserPanel } from './components/BrowserPanel';
 import { useSessionStore } from './store/sessions';
 import { pty } from './lib/pty-ipc';
+import type { WorktreeInfo, ConflictReport } from '../common/worktree-types';
 
 interface PanelEntry { id: string; agent: string; dockId: string; ptyId?: string; cwd: string; createdAt: number; running: boolean; status: string; gitBranch?: string; needsAttention: boolean; exited: boolean; resumeId?: string; isRestored?: boolean; }
 let nextN = 1;
@@ -44,6 +45,8 @@ export default function App() {
   const [showTasks, setShowTasks] = useState(false);
   const [showContext, setShowContext] = useState(false);
   const [notificationCount, setNotificationCount] = useState(0);
+  const [worktrees, setWorktrees] = useState<WorktreeInfo[]>([]);
+  const [conflicts, setConflicts] = useState<ConflictReport | null>(null);
 
   const addLog = useCallback((text: string, color: string) => {
     setLogs((prev) => [...prev.slice(-99), { time: now(), text, color }]);
@@ -108,6 +111,21 @@ export default function App() {
     };
     refresh();
     const iv = setInterval(refresh, 3000);
+    return () => clearInterval(iv);
+  }, []);
+
+  // Poll worktree status and conflicts from main process
+  useEffect(() => {
+    const refresh = async () => {
+      try {
+        const wts = await window.electronAPI.listWorktrees();
+        if (Array.isArray(wts)) setWorktrees(wts);
+        const cr = await window.electronAPI.getWorktreeConflicts();
+        if (cr) setConflicts(cr);
+      } catch { /* ignore */ }
+    };
+    refresh();
+    const iv = setInterval(refresh, 5000);
     return () => clearInterval(iv);
   }, []);
 
@@ -186,7 +204,9 @@ export default function App() {
         onShowDashboard={() => setShowDashboard(true)}
         onShowNotifications={() => setShowNotify(true)}
         onShowTasks={() => setShowTasks(true)}
-        onShowContext={() => setShowContext(true)} />
+        onShowContext={() => setShowContext(true)}
+        worktrees={worktrees}
+        conflicts={conflicts} />
       <div style={{ flex: 1, display: 'grid', gridTemplateColumns: `repeat(${gridCols}, 1fr)`, gridTemplateRows: `repeat(${totalRows}, 1fr)`, background: '#1a1a1e', minWidth: 0, minHeight: 0, overflow: 'hidden' }}>
         {cells.map((c) => {
           const p = panels[c.idx];

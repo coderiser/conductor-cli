@@ -1,4 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
+import { WorktreeBadge } from './WorktreeBadge';
+import type { WorktreeInfo, ConflictReport } from '../../common/worktree-types';
 
 export interface SessionMeta { id: string; agent: string; cwd: string; branch?: string; gitBranch?: string; elapsed: number; running: boolean; status?: string; needsAttention?: boolean; exited?: boolean; }
 export interface LogEntry { time: string; text: string; color: string; }
@@ -15,9 +17,11 @@ interface Props {
   onShowNotifications?: () => void;
   onShowTasks?: () => void;
   onShowContext?: () => void;
+  worktrees?: WorktreeInfo[];
+  conflicts?: ConflictReport | null;
 }
 
-export function Sidebar({ onAddTerminal, onKillCurrent, onBroadcast, stats, sessions, logs, notificationCount = 0, onShowDashboard, onShowNotifications, onShowTasks, onShowContext }: Props) {
+export function Sidebar({ onAddTerminal, onKillCurrent, onBroadcast, stats, sessions, logs, notificationCount = 0, onShowDashboard, onShowNotifications, onShowTasks, onShowContext, worktrees = [], conflicts = null }: Props) {
   const [detected, setDetected] = useState<Array<{id:string;name:string;installed:boolean}>>([
     { id: 'cmd', name: 'Command Prompt', installed: true },
   ]);
@@ -221,6 +225,13 @@ export function Sidebar({ onAddTerminal, onKillCurrent, onBroadcast, stats, sess
                   </div>
                 ))}
               </div>
+        )}
+
+        <div style={{ borderBottom:'1px solid var(--hairline)', margin:'4px 0' }} />
+
+        {/* Worktrees */}
+        {section('Worktrees', 'worktrees',
+          <WorktreeBadge worktrees={worktrees} conflicts={conflicts} />
         )}
 
         <div style={{ borderBottom:'1px solid var(--hairline)', margin:'4px 0' }} />
