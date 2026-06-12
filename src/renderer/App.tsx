@@ -3,6 +3,9 @@ import { TerminalPanel } from './components/TerminalPanel';
 import { Sidebar, type SessionMeta, type LogEntry } from './components/Sidebar';
 import { AgentDashboard } from './components/AgentDashboard';
 import { NotifyPanel } from './components/NotifyPanel';
+import { TaskPanel } from './components/TaskPanel';
+import { ContextFeed } from './components/ContextFeed';
+import { BrowserPanel } from './components/BrowserPanel';
 import { useSessionStore } from './store/sessions';
 import { pty } from './lib/pty-ipc';
 
@@ -32,14 +35,15 @@ export default function App() {
   const [activeIdx, setActiveIdx] = useState(0);
   const startTime = useRef(Date.now());
   const { add, remove, updateId, sessions } = useSessionStore();
-  const [stats, setStats] = useState({ tasks: 0, tokens: 0, running: 0, failed: 0, duration: '0m', cost: 0 });
+  const [stats, setStats] = useState({ tasks: 0, tokens: 0, running: 0, failed: 0, duration: '0m' });
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const failedRef = useRef(0);
   const tokensRef = useRef(0);
   const [showDashboard, setShowDashboard] = useState(false);
   const [showNotify, setShowNotify] = useState(false);
+  const [showTasks, setShowTasks] = useState(false);
+  const [showContext, setShowContext] = useState(false);
   const [notificationCount, setNotificationCount] = useState(0);
-  const [totalCost, setTotalCost] = useState(0);
 
   const addLog = useCallback((text: string, color: string) => {
     setLogs((prev) => [...prev.slice(-99), { time: now(), text, color }]);
@@ -89,10 +93,10 @@ export default function App() {
   // Stats
   useEffect(() => {
     const iv = setInterval(() => {
-      setStats({ tasks: panels.length, tokens: tokensRef.current, running: panels.filter(p => p.running).length, failed: failedRef.current, duration: `${Math.floor((Date.now() - startTime.current) / 60000)}m`, cost: totalCost });
+      setStats({ tasks: panels.length, tokens: tokensRef.current, running: panels.filter(p => p.running).length, failed: failedRef.current, duration: `${Math.floor((Date.now() - startTime.current) / 60000)}m` });
     }, 1000);
     return () => clearInterval(iv);
-  }, [panels, totalCost]);
+  }, [panels]);
 
   // Poll notification count and cost from main process
   useEffect(() => {
@@ -100,10 +104,6 @@ export default function App() {
       try {
         const count = await window.electronAPI.getNotificationCount();
         setNotificationCount(count);
-      } catch { /* ignore */ }
-      try {
-        const totals = await window.electronAPI.getStatsTotals();
-        setTotalCost(totals?.cost ?? 0);
       } catch { /* ignore */ }
     };
     refresh();
@@ -170,6 +170,8 @@ export default function App() {
       if (e.ctrlKey && e.key === 'n') { e.preventDefault(); addTerminal('cmd.exe'); }
       if (e.ctrlKey && e.key === 'w') { e.preventDefault(); killCurrent(); }
       if (e.ctrlKey && e.key === 'd') { e.preventDefault(); setShowDashboard((v) => !v); }
+      if (e.ctrlKey && e.key === 't') { e.preventDefault(); setShowTasks(v => !v); }
+      if (e.ctrlKey && e.key === 'g') { e.preventDefault(); setShowContext(v => !v); }
     };
     window.addEventListener('keydown', h, { capture: true });
     return () => window.removeEventListener('keydown', h, { capture: true });
@@ -182,7 +184,9 @@ export default function App() {
         logs={logs}
         notificationCount={notificationCount}
         onShowDashboard={() => setShowDashboard(true)}
-        onShowNotifications={() => setShowNotify(true)} />
+        onShowNotifications={() => setShowNotify(true)}
+        onShowTasks={() => setShowTasks(true)}
+        onShowContext={() => setShowContext(true)} />
       <div style={{ flex: 1, display: 'grid', gridTemplateColumns: `repeat(${gridCols}, 1fr)`, gridTemplateRows: `repeat(${totalRows}, 1fr)`, background: '#1a1a1e', minWidth: 0, minHeight: 0, overflow: 'hidden' }}>
         {cells.map((c) => {
           const p = panels[c.idx];
@@ -221,6 +225,9 @@ export default function App() {
           if (idx >= 0) setActiveIdx(idx);
         }}
       />
+      <TaskPanel visible={showTasks} onClose={() => setShowTasks(false)} />
+      <ContextFeed visible={showContext} onClose={() => setShowContext(false)} />
+      <BrowserPanel sessionId={panels[activeIdx]?.ptyId} />
     </div>
   );
 }

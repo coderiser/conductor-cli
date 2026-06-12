@@ -6,12 +6,18 @@ import { initDatabase, saveAgentStats } from './database.js';
 import { StatsCollector } from './stats-collector.js';
 import { NotifyCenter } from './notify-center.js';
 import { AgentWatchdog } from './agent-watchdog.js';
+import { TaskQueue } from './task-queue.js';
+import { ContextShare } from './context-share.js';
+import { EmbeddedBrowser } from './embedded-browser.js';
 
 let mainWindow: BrowserWindow | null = null;
 let daemonClient: DaemonClient | null = null;
 let statsCollector: StatsCollector | null = null;
 let notifyCenter: NotifyCenter | null = null;
 let watchdog: AgentWatchdog | null = null;
+let taskQueue: TaskQueue | null = null;
+let contextShare: ContextShare | null = null;
+let embeddedBrowser: EmbeddedBrowser | null = null;
 
 async function createWindow() {
   mainWindow = new BrowserWindow({
@@ -51,8 +57,19 @@ async function createWindow() {
     }
   });
 
+  // ── Phase 4: Task Queue & Context Sharing ──────────────────────────────
+  taskQueue = new TaskQueue();
+  contextShare = new ContextShare();
+
+  try {
+    const savedTasks = taskQueue ? [] : []; // DB loading handled via IPC
+  } catch { /* ignore */ }
+
+  // ── Phase 4: Embedded Browser ──────────────────────────────────────────
+  embeddedBrowser = new EmbeddedBrowser(mainWindow);
+
   // Set up IPC bridge between renderer and daemon
-  setupIpcHandlers(daemonClient, mainWindow, statsCollector, notifyCenter);
+  setupIpcHandlers(daemonClient, mainWindow, statsCollector, notifyCenter, taskQueue, contextShare, embeddedBrowser);
 
   // Wire daemon events to stats collector and notify center
   daemonClient.on('spawned', (msg: any) => {
@@ -126,6 +143,7 @@ app.whenReady().then(async () => {
 
 app.on('window-all-closed', () => {
   watchdog?.stop();
+  embeddedBrowser?.destroyAll();
   persistStats();
   statsCollector?.dispose();
   daemonClient?.destroy();
@@ -135,6 +153,7 @@ app.on('window-all-closed', () => {
 // Also kill daemon on app quit (e.g., F10 shortcut, macOS Cmd+Q)
 app.on('before-quit', () => {
   watchdog?.stop();
+  embeddedBrowser?.destroyAll();
   persistStats();
   statsCollector?.dispose();
   daemonClient?.destroy();

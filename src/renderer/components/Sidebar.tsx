@@ -7,15 +7,17 @@ interface Props {
   onAddTerminal: (a: string, cwd?: string) => void;
   onKillCurrent: () => void;
   onBroadcast: (data: string) => void;
-  stats: { tasks: number; tokens: number; running: number; failed: number; duration: string; cost: number };
+  stats: { tasks: number; tokens: number; running: number; failed: number; duration: string };
   sessions: SessionMeta[];
   logs: LogEntry[];
   notificationCount?: number;
   onShowDashboard?: () => void;
   onShowNotifications?: () => void;
+  onShowTasks?: () => void;
+  onShowContext?: () => void;
 }
 
-export function Sidebar({ onAddTerminal, onKillCurrent, onBroadcast, stats, sessions, logs, notificationCount = 0, onShowDashboard, onShowNotifications }: Props) {
+export function Sidebar({ onAddTerminal, onKillCurrent, onBroadcast, stats, sessions, logs, notificationCount = 0, onShowDashboard, onShowNotifications, onShowTasks, onShowContext }: Props) {
   const [detected, setDetected] = useState<Array<{id:string;name:string;installed:boolean}>>([
     { id: 'cmd', name: 'Command Prompt', installed: true },
   ]);
@@ -105,7 +107,6 @@ export function Sidebar({ onAddTerminal, onKillCurrent, onBroadcast, stats, sess
           <div style={{ fontSize:11, color:'var(--body)', lineHeight:'18px' }}>
             <div style={{ display:'flex', justifyContent:'space-between' }}><span>Tasks</span><span style={{ color:'var(--pending)' }}>{stats.tasks}</span></div>
             <div style={{ display:'flex', justifyContent:'space-between' }}><span>Tokens</span><span style={{ color:'var(--pending)' }}>{stats.tokens.toLocaleString()}</span></div>
-            <div style={{ display:'flex', justifyContent:'space-between' }}><span>Cost</span><span style={{ color:'var(--running)' }}>{stats.cost > 0 ? '$' + stats.cost.toFixed(2) : '—'}</span></div>
             <div style={{ display:'flex', justifyContent:'space-between' }}><span>Running</span><span style={{ color:'var(--running)' }}>{stats.running}</span></div>
             <div style={{ display:'flex', justifyContent:'space-between' }}><span>Failed</span><span style={{ color: stats.failed > 0 ? 'var(--failed)' : 'var(--caption)' }}>{stats.failed}</span></div>
             <div style={{ display:'flex', justifyContent:'space-between' }}><span>Duration</span><span style={{ color:'var(--caption)' }}>{stats.duration}</span></div>
@@ -124,6 +125,20 @@ export function Sidebar({ onAddTerminal, onKillCurrent, onBroadcast, stats, sess
                   color: notificationCount > 0 ? 'var(--accent)' : 'var(--body)',
                   cursor:'pointer', padding:'3px 0', fontSize:10, fontFamily:'var(--font-sans)',
                 }}>🔔 {notificationCount > 0 ? `(${notificationCount})` : 'Notify'}</button>
+              )}
+            </div>
+            <div style={{ display:'flex', gap:4, marginTop:4 }}>
+              {onShowTasks && (
+                <button onClick={onShowTasks} style={{
+                  flex:1, background:'var(--canvas-soft)', border:'1px solid var(--hairline)', borderRadius:3,
+                  color:'var(--body)', cursor:'pointer', padding:'3px 0', fontSize:10, fontFamily:'var(--font-sans)',
+                }}>📋 Tasks</button>
+              )}
+              {onShowContext && (
+                <button onClick={onShowContext} style={{
+                  flex:1, background:'var(--canvas-soft)', border:'1px solid var(--hairline)', borderRadius:3,
+                  color:'var(--body)', cursor:'pointer', padding:'3px 0', fontSize:10, fontFamily:'var(--font-sans)',
+                }}>💬 Context</button>
               )}
             </div>
           </div>
@@ -255,6 +270,8 @@ export function Sidebar({ onAddTerminal, onKillCurrent, onBroadcast, stats, sess
         <span style={{ color:'var(--ink)' }}>F1-F9</span> pane &nbsp;
         <span style={{ color:'var(--ink)' }}>Ctrl+N</span> new &nbsp;
         <span style={{ color:'var(--ink)' }}>Ctrl+W</span> close &nbsp;
+        <span style={{ color:'var(--ink)' }}>Ctrl+T</span> tasks &nbsp;
+        <span style={{ color:'var(--ink)' }}>Ctrl+G</span> ctx &nbsp;
         <span style={{ color:'var(--ink)' }}>F10</span> quit
       </div>
     </div>
