@@ -8,7 +8,8 @@ export type ClientMessage =
   | { type: 'kill'; sessionId: string }
   | { type: 'list' }
   | { type: 'set-agent-session-id'; sessionId: string; agentSessionId: string }
-  | { type: 'get-session-activity'; sessionId: string };
+  | { type: 'get-session-activity'; sessionId: string }
+  | { type: 'agent-notify'; sessionId: string; agentId: string; payload: unknown };
 
 export type DaemonMessage =
   | { type: 'hello-ack'; version: number }
@@ -18,7 +19,8 @@ export type DaemonMessage =
   | { type: 'session-id-changed'; sessionId: string; agentSessionId: string }
   | { type: 'session-activity'; sessionId: string; hasRecentOutput: boolean; lastOutputAt: number }
   | { type: 'list-response'; sessions: SessionInfo[] }
-  | { type: 'error'; message: string };
+  | { type: 'error'; message: string }
+  | { type: 'agent-notify'; sessionId: string; agentId: string; payload: unknown };
 
 export interface SessionInfo {
   sessionId: string;
