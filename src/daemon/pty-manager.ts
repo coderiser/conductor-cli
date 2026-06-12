@@ -268,6 +268,6 @@ export class PtyManager {
     const config = this.agentConfigs.get(agent);
     if (config) return config;
     // Fallback: treat unknown agent as raw command with no templates
-    return { id: agent, name: agent, command: agent, args: [], createTemplate: '', resumeTemplate: '', setup: [], builtin: false };
+    return { id: agent, name: agent, command: agent, args: [], createTemplate: '', resumeTemplate: '', setup: [], builtin: false, capabilities: ['code-gen', 'code-review', 'shell', 'file-ops'] };
   }
 }
